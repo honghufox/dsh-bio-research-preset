@@ -71,7 +71,7 @@ class DshTrayLauncher : ApplicationContext
         menu.Items.Add("打开 DSH 界面", null, (s, e) => OpenBrowser());
         menu.Items.Add("查看 DSH 日志", null, (s, e) => OpenLog());
         menu.Items.Add(new ToolStripSeparator());
-        menu.Items.Add("停止 DSH 并恢复默认", null, (s, e) => { StopDsh(); Exit(true); });
+        menu.Items.Add("停止 DSH（含外部启动的实例）并恢复默认", null, (s, e) => { StopDsh(); Exit(true); });
         menu.Items.Add("退出（DSH 保持运行）", null, (s, e) => Exit(true));
         trayIcon.ContextMenuStrip = menu;
         trayIcon.DoubleClick += (s, e) => OpenBrowser();
@@ -136,20 +136,60 @@ class DshTrayLauncher : ApplicationContext
 
     void StopDsh()
     {
+        // 1. 若 DSH 由本启动器启动，先结束其进程树
         if (startedByUs && dshProcess != null)
         {
-            try
-            {
-                if (!dshProcess.HasExited)
-                {
-                    ProcessStartInfo psi = new ProcessStartInfo("taskkill", "/pid " + dshProcess.Id + " /T /F");
-                    psi.UseShellExecute = false;
-                    psi.CreateNoWindow = true;
-                    Process.Start(psi).WaitForExit(10000);
-                }
-            }
+            try { if (!dshProcess.HasExited) KillTree(dshProcess.Id); }
             catch { }
         }
+        // 2. 按 3080 端口定位实际监听的进程（可能由外部终端启动的孤儿实例），整树结束
+        int pid = FindPidOnPort(PORT);
+        if (pid > 0) KillTree(pid);
+    }
+
+    // 找到监听指定端口的进程 PID（netstat -ano 解析）
+    static int FindPidOnPort(int port)
+    {
+        try
+        {
+            Process p = new Process();
+            p.StartInfo = new ProcessStartInfo("netstat", "-ano");
+            p.StartInfo.UseShellExecute = false;
+            p.StartInfo.CreateNoWindow = true;
+            p.StartInfo.RedirectStandardOutput = true;
+            p.Start();
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(5000);
+            string token = ":" + port;
+            foreach (string line in output.Split('\n'))
+            {
+                string t = line.Trim();
+                if (t.Contains(token) && (t.Contains("LISTENING") || t.Contains("LISTEN")))
+                {
+                    string[] parts = t.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length >= 5)
+                    {
+                        int pid;
+                        if (int.TryParse(parts[parts.Length - 1], out pid))
+                            return pid;
+                    }
+                }
+            }
+        }
+        catch { }
+        return 0;
+    }
+
+    static void KillTree(int pid)
+    {
+        try
+        {
+            ProcessStartInfo psi = new ProcessStartInfo("taskkill", "/pid " + pid + " /T /F");
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            Process.Start(psi).WaitForExit(10000);
+        }
+        catch { }
     }
 
     void OpenBrowser()
@@ -211,9 +251,10 @@ class DshTrayLauncher : ApplicationContext
             File.WriteAllText(BakPath, original, new UTF8Encoding(false));
             File.WriteAllText(SettingsPath, SetDefaultPreset(original, "bio-research"), new UTF8Encoding(false));
             bool open = PortOpen(PORT);
+            int pid = open ? FindPidOnPort(PORT) : 0;
             RestoreDefault();
             string now = File.Exists(SettingsPath) ? File.ReadAllText(SettingsPath, Encoding.UTF8) : "";
-            result = "OK port=" + (open ? "running" : "closed")
+            result = "OK port=" + (open ? "running(pid " + pid + ")" : "closed")
                    + " restored=" + (now == original ? "yes" : "NO")
                    + " bak=" + (File.Exists(BakPath) ? "left" : "removed");
         }
