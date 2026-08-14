@@ -45,6 +45,11 @@
 .\docs\setup-dsh-new-machine.ps1   # 自动完成 DSH 安装、预设克隆、Python 包、MCP 依赖
 ```
 
+## Windows 一键启动器（可选）
+
+[`docs/launcher/`](docs/launcher/) 提供「生物科研模式一键启动」桌面工具源码（C#，无需额外运行时）：
+临时切换默认预设 → 启动 dsh web → 打开浏览器 → 退出时自动恢复。编译方法见其 README。
+
 ## 目录结构
 
 ```
