@@ -1,137 +1,183 @@
-// DSH 生物科研模式一键启动器
-// 编译: csc.exe /nologo /codepage:65001 /out:DSH生物科研一键启动.exe DSH生物科研启动器.cs
-// 功能: 临时把默认预设切换为 bio-research -> 启动 dsh web -> 打开浏览器 ->
-//       等待 DSH 退出后恢复原默认预设。
-// 用法: DSH生物科研一键启动.exe [--check] [--no-browser]
+// DSH 生物科研模式一键启动器（系统托盘版）
+// 编译:
+//   csc.exe /nologo /codepage:65001 /target:winexe /optimize
+//         /r:System.Windows.Forms.dll /r:System.Drawing.dll
+//         /win32icon:whale.ico /out:DSH生物科研一键启动.exe DSH生物科研启动器.cs
+// 行为: 无窗口、无任务栏按钮，只驻留系统托盘（黑鲸鱼图标）。
+//   启动时临时把默认预设切换为 bio-research -> 必要时后台启动 dsh web（日志写文件）
+//   -> 托盘气泡提示 -> 监控 3080 端口，DSH 停止后自动恢复默认预设并退出。
+// 用法: DSH生物科研一键启动.exe [--check]
 using System;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
+using System.Windows.Forms;
 
-class DshBioLauncher
+class DshTrayLauncher : ApplicationContext
 {
     const int PORT = 3080;
-    const int SW_MINIMIZE = 6;
     static readonly string HomeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     static readonly string SettingsPath = Path.Combine(HomeDir, ".dsh", "settings.yaml");
     static readonly string BakPath = SettingsPath + ".launcher-bak";
     static readonly string Workspace = Directory.Exists("G:\\dsh") ? "G:\\dsh" : HomeDir;
+    static readonly string LogFile = Path.Combine(Workspace, "dsh-web.log");
+    static readonly string CheckFile = Path.Combine(Path.GetDirectoryName(typeof(DshTrayLauncher).Assembly.Location) ?? ".", "check-result.txt");
 
-    [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
-    [DllImport("user32.dll")]   static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    NotifyIcon trayIcon;
+    Timer monitor;
+    Process dshProcess;
+    bool startedByUs = false;
+    bool exited = false;
 
+    [STAThread]
     static int Main(string[] args)
     {
-        bool check = HasArg(args, "--check");
-        bool noBrowser = HasArg(args, "--no-browser");
-        bool noMinimize = HasArg(args, "--no-minimize");
+        if (HasArg(args, "--check"))
+            return DoCheck();
+        Application.EnableVisualStyles();
+        Application.Run(new DshTrayLauncher());
+        return 0;
+    }
 
-        // 默认把控制台窗口最小化到任务栏，降低误关闭几率（自检模式保持可见）
-        if (!check && !noMinimize)
-        {
-            IntPtr hwnd = GetConsoleWindow();
-            if (hwnd != IntPtr.Zero)
-                ShowWindow(hwnd, SW_MINIMIZE);
-        }
-
-        Console.WriteLine("==============================================");
-        Console.WriteLine("  DSH 生物科研模式一键启动器");
-        Console.WriteLine("==============================================");
-
+    DshTrayLauncher()
+    {
         // 1. 备份并切换默认预设
-        string original = "";
         try
         {
-            if (File.Exists(SettingsPath))
-                original = File.ReadAllText(SettingsPath, Encoding.UTF8);
+            string original = File.Exists(SettingsPath) ? File.ReadAllText(SettingsPath, Encoding.UTF8) : "";
             File.WriteAllText(BakPath, original, new UTF8Encoding(false));
-            string next = SetDefaultPreset(original, "bio-research");
-            File.WriteAllText(SettingsPath, next, new UTF8Encoding(false));
-            Console.WriteLine("[1/4] 默认预设已切换为 bio-research（退出本程序时自动恢复）");
+            File.WriteAllText(SettingsPath, SetDefaultPreset(original, "bio-research"), new UTF8Encoding(false));
         }
         catch (Exception ex)
         {
-            Console.WriteLine("错误: 无法修改 settings.yaml: " + ex.Message);
-            return 1;
+            Balloon("启动失败", "无法修改 settings.yaml: " + ex.Message);
+            Exit(false);
+            return;
         }
 
-        if (check)
-        {
-            Console.WriteLine("自检模式: 预设切换 OK，端口 3080 = " + (PortOpen(PORT) ? "已运行" : "未运行"));
-            RestoreDefault();
-            Console.WriteLine("自检完成，已恢复原预设。");
-            return 0;
-        }
+        // 2. 托盘图标（黑鲸鱼，取自 exe 自身嵌入图标）
+        Icon appIcon;
+        try { appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
+        catch { appIcon = SystemIcons.Application; }
+        trayIcon = new NotifyIcon();
+        trayIcon.Icon = appIcon;
+        trayIcon.Text = "DSH 生物科研模式";
+        trayIcon.Visible = true;
 
-        // 2. 检查/启动 DSH
-        bool already = PortOpen(PORT);
-        if (!already)
+        ContextMenuStrip menu = new ContextMenuStrip();
+        menu.Items.Add("打开 DSH 界面", null, (s, e) => OpenBrowser());
+        menu.Items.Add("查看 DSH 日志", null, (s, e) => OpenLog());
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("停止 DSH 并恢复默认", null, (s, e) => { StopDsh(); Exit(true); });
+        menu.Items.Add("退出（DSH 保持运行）", null, (s, e) => Exit(true));
+        trayIcon.ContextMenuStrip = menu;
+        trayIcon.DoubleClick += (s, e) => OpenBrowser();
+
+        // 3. 启动 DSH（未运行时）
+        if (!PortOpen(PORT))
         {
-            Console.WriteLine("[2/4] DSH 未运行，正在启动 dsh web（工作目录: " + Workspace + "）...");
-            try
-            {
-                var psi = new ProcessStartInfo("cmd.exe", "/c start /min \"DSH Web\" dsh web");
-                psi.WorkingDirectory = Workspace;
-                psi.UseShellExecute = true;
-                Process.Start(psi);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine("错误: 无法启动 dsh: " + ex.Message);
-                RestoreDefault();
-                return 1;
-            }
+            Balloon("生物科研模式", "正在后台启动 dsh web ...");
+            StartDsh();
             int waited = 0;
             while (!PortOpen(PORT) && waited < 180000)
             {
-                Thread.Sleep(2000);
+                System.Threading.Thread.Sleep(2000);
                 waited += 2000;
-                if (waited % 20000 == 0)
-                    Console.WriteLine("    等待 DSH 就绪 ... " + (waited / 1000) + "s");
             }
             if (!PortOpen(PORT))
             {
-                Console.WriteLine("错误: DSH 启动超时（180s），请查看 DSH 窗口日志。");
-                RestoreDefault();
-                return 1;
+                Balloon("启动失败", "DSH 180 秒内未就绪，请查看日志: " + LogFile);
+                Exit(true);
+                return;
             }
-            Console.WriteLine("    DSH 已就绪 (http://127.0.0.1:" + PORT + ")");
+            Balloon("生物科研模式已就绪", "http://127.0.0.1:" + PORT + Environment.NewLine + "日志: " + LogFile);
         }
         else
         {
-            Console.WriteLine("[2/4] 检测到 DSH 已在运行 (http://127.0.0.1:" + PORT + ")，直接使用。");
+            Balloon("生物科研模式", "DSH 已在运行，直接使用: http://127.0.0.1:" + PORT);
         }
+        OpenBrowser();
 
-        // 3. 打开浏览器
-        Console.WriteLine("[3/4] 正在打开浏览器 ...");
-        if (!noBrowser)
+        // 4. 监控 DSH 状态（每 5 秒）
+        monitor = new Timer();
+        monitor.Interval = 5000;
+        monitor.Tick += delegate(object s, EventArgs e)
         {
-            try { Process.Start("http://127.0.0.1:" + PORT); }
-            catch (Exception ex) { Console.WriteLine("    打开浏览器失败: " + ex.Message + "（可手动访问）"); }
-        }
-
-        // 4. 等待 DSH 停止 / Ctrl+C
-        Console.WriteLine("[4/4] DSH 运行中。窗口已最小化到任务栏（点击任务栏按钮查看状态）。");
-        Console.WriteLine("    关闭 DSH 窗口后本程序自动恢复默认预设；按 Ctrl+C 立即恢复并退出。");
-        Console.CancelKeyPress += delegate(object s, ConsoleCancelEventArgs e)
-        {
-            e.Cancel = true;
-            RestoreDefault();
-            Console.WriteLine("已恢复默认预设。DSH 仍在运行。");
-            Environment.Exit(0);
+            if (!PortOpen(PORT))
+            {
+                Balloon("DSH 已停止", "默认预设已恢复，本程序将退出。");
+                Exit(true);
+            }
         };
+        monitor.Start();
+    }
 
-        while (PortOpen(PORT))
-            Thread.Sleep(5000);
+    void StartDsh()
+    {
+        try
+        {
+            string args = "/c \"dsh web\" > \"" + LogFile + "\" 2>&1";
+            ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", args);
+            psi.WorkingDirectory = Workspace;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            psi.WindowStyle = ProcessWindowStyle.Hidden;
+            dshProcess = Process.Start(psi);
+            startedByUs = true;
+        }
+        catch (Exception ex)
+        {
+            Balloon("启动失败", "无法启动 dsh: " + ex.Message + "（请确认 npm install -g @deepseek-ai/dsh）");
+        }
+    }
 
-        RestoreDefault();
-        Console.WriteLine("DSH 已停止，默认预设已恢复。按任意键退出 ...");
-        Console.ReadKey();
-        return 0;
+    void StopDsh()
+    {
+        if (startedByUs && dshProcess != null)
+        {
+            try
+            {
+                if (!dshProcess.HasExited)
+                {
+                    ProcessStartInfo psi = new ProcessStartInfo("taskkill", "/pid " + dshProcess.Id + " /T /F");
+                    psi.UseShellExecute = false;
+                    psi.CreateNoWindow = true;
+                    Process.Start(psi).WaitForExit(10000);
+                }
+            }
+            catch { }
+        }
+    }
+
+    void OpenBrowser()
+    {
+        try { Process.Start("http://127.0.0.1:" + PORT); }
+        catch { }
+    }
+
+    void OpenLog()
+    {
+        try { Process.Start("notepad.exe", LogFile); }
+        catch { }
+    }
+
+    void Balloon(string title, string text)
+    {
+        try { trayIcon.ShowBalloonTip(4000, title, text, ToolTipIcon.Info); }
+        catch { }
+    }
+
+    void Exit(bool restore)
+    {
+        if (exited) return;
+        exited = true;
+        if (restore) RestoreDefault();
+        if (monitor != null) { monitor.Stop(); monitor.Dispose(); }
+        if (trayIcon != null) { trayIcon.Visible = false; trayIcon.Dispose(); }
+        Application.Exit();
     }
 
     static bool HasArg(string[] args, string name)
@@ -150,29 +196,45 @@ class DshBioLauncher
             {
                 File.Copy(BakPath, SettingsPath, true);
                 File.Delete(BakPath);
-                Console.WriteLine("已恢复原默认预设。");
             }
+        }
+        catch { }
+    }
+
+    // 自检: 切换预设 -> 检测端口 -> 恢复，结果写入 check-result.txt（无 UI）
+    static int DoCheck()
+    {
+        string result;
+        try
+        {
+            string original = File.Exists(SettingsPath) ? File.ReadAllText(SettingsPath, Encoding.UTF8) : "";
+            File.WriteAllText(BakPath, original, new UTF8Encoding(false));
+            File.WriteAllText(SettingsPath, SetDefaultPreset(original, "bio-research"), new UTF8Encoding(false));
+            bool open = PortOpen(PORT);
+            RestoreDefault();
+            string now = File.Exists(SettingsPath) ? File.ReadAllText(SettingsPath, Encoding.UTF8) : "";
+            result = "OK port=" + (open ? "running" : "closed")
+                   + " restored=" + (now == original ? "yes" : "NO")
+                   + " bak=" + (File.Exists(BakPath) ? "left" : "removed");
         }
         catch (Exception ex)
         {
-            Console.WriteLine("警告: 恢复 settings.yaml 失败: " + ex.Message + "（当前默认预设为 bio-research，可手动编辑 " + SettingsPath + "）");
+            result = "FAIL " + ex.Message;
         }
+        try { File.WriteAllText(CheckFile, result, new UTF8Encoding(false)); }
+        catch { }
+        return 0;
     }
 
     // 在 settings.yaml 中把 agent-presets.default 设为 preset
     static string SetDefaultPreset(string content, string preset)
     {
-        // 情况 1: 已有 agent-presets 块且含 default 行
         Regex rx1 = new Regex("(?m)^(\\s*agent-presets:\\s*\\r?\\n)(\\s*default:\\s*)[^\\r\\n]*");
         if (rx1.IsMatch(content))
             return rx1.Replace(content, delegate(Match m) { return m.Groups[1].Value + m.Groups[2].Value + preset; });
-
-        // 情况 2: 已有 agent-presets 块但无 default 行
         Regex rx2 = new Regex("(?m)^(\\s*agent-presets:\\s*)$");
         if (rx2.IsMatch(content))
             return rx2.Replace(content, delegate(Match m) { return m.Groups[1].Value + Environment.NewLine + "  default: " + preset; });
-
-        // 情况 3: 文件无 agent-presets 块（或文件不存在）→ 追加
         StringBuilder sb = new StringBuilder(content);
         if (sb.Length > 0 && !content.EndsWith("\n"))
             sb.Append(Environment.NewLine);

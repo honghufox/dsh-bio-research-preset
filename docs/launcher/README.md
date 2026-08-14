@@ -1,31 +1,41 @@
-﻿# DSH 生物科研一键启动器
+# DSH 生物科研一键启动器（系统托盘版）
 
 Windows 桌面工具：双击即启动 DSH Web（并临时切换到「生物科研模式」预设），
-关闭 DSH 后自动恢复原默认预设。**带 DSH 黑色鲸鱼图标，窗口默认最小化到任务栏。**
+关闭 DSH 后自动恢复原默认预设。**无窗口、无任务栏按钮，只驻留系统托盘**
+（黑鲸鱼图标），彻底避免误关闭。
 
 ## 使用
 
 - **双击 `DSH生物科研一键启动.exe`**（桌面或 `G:\dsh\` 下）：
-  1. 控制台窗口自动最小化到任务栏（点击任务栏按钮可查看状态，降低误关闭几率）
-  2. 把默认预设临时切换为 `bio-research`
-  3. 若 DSH 未运行 → 自动启动 `dsh web`（新窗口同样最小化，工作目录 `G:\dsh`）；已在运行 → 直接使用
-  4. 自动打开浏览器 `http://127.0.0.1:3080`
-  5. 关闭 DSH 窗口或按 `Ctrl+C` → 恢复原默认预设
-- 命令行选项：`--check`（自检，不启动、不最小化）、`--no-browser`、`--no-minimize`
+  1. 系统托盘出现黑鲸鱼图标（时钟旁边），弹出气泡提示
+  2. 默认预设临时切换为 `bio-research`；未运行时后台启动 `dsh web`（无窗口，日志写 `G:\dsh\dsh-web.log`）
+  3. 自动打开浏览器 `http://127.0.0.1:3080`
+  4. 监控 DSH 状态：DSH 停止后自动恢复默认预设并退出托盘
+- **右键托盘图标菜单**：
+  - 打开 DSH 界面（浏览器）
+  - 查看 DSH 日志（记事本打开）
+  - 停止 DSH 并恢复默认（结束 DSH 后退出）
+  - 退出（DSH 保持运行，仅恢复默认）
+- **左键双击**：打开浏览器
 
 ## 工作原理
 
 - 备份 `%USERPROFILE%\.dsh\settings.yaml` → 把 `agent-presets.default` 临时改为 `bio-research`
-- 轮询 127.0.0.1:3080 判断 DSH 是否在运行
-- 退出时从备份恢复 `settings.yaml`（备份文件 `settings.yaml.launcher-bak` 自动删除）
-- 图标：DSH 官方 favicon（黑色鲸鱼，`dsh-web-frontend/dist/favicon.svg`）→ sharp 栅格化 → ICO（256px）
+- 轮询 127.0.0.1:3080 判断 DSH 是否在运行（每 5 秒）
+- 退出时从备份恢复 `settings.yaml`（备份 `settings.yaml.launcher-bak` 自动删除）
+- 图标：DSH 官方 favicon（黑色鲸鱼）→ `whale.ico`，经 `/win32icon` 嵌入 exe，托盘直接复用
+- DSH 进程通过 `taskkill /T` 整树结束（含其 node 子进程）
+
+## 命令行
+
+- `--check`：自检（切换预设→检测端口→恢复），结果写入 exe 同目录 `check-result.txt`，无界面
 
 ## 注意事项
 
-- 强制关闭启动器窗口（任务栏右键关闭）时 DSH 会继续运行、默认预设保持 bio-research 不恢复；
-  再次运行启动器或手动编辑 settings.yaml 即可恢复
 - 需要 `dsh` 在 PATH 中（`npm install -g @deepseek-ai/dsh`）
-- 工作目录固定为 `G:\dsh`（不存在时用用户主目录）
+- 工作目录固定为 `G:\dsh`（不存在时用用户主目录）；DSH 日志 `G:\dsh\dsh-web.log`
+- 强制结束托盘进程（任务管理器）时不会恢复默认预设，下次运行启动器或手动编辑 settings.yaml 即可
+- 若托盘图标不显示：Windows 设置 → 任务栏 → 选择显示在任务栏上的图标 → 打开「DSH 生物科研模式」
 
 ## 重新编译（如修改源码）
 
@@ -34,7 +44,8 @@ Windows 桌面工具：双击即启动 DSH Web（并临时切换到「生物科�
 ```powershell
 # 1. 重新生成 ICO（需 sharp）：
 #    node make-ico.js   （读 whale.svg 生成 whale.ico）
-# 2. 编译并嵌入图标：
-& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /codepage:65001 /optimize `
+# 2. 编译（GUI 子系统，无控制台）：
+& "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe" /nologo /codepage:65001 /target:winexe /optimize `
+  /r:System.Windows.Forms.dll /r:System.Drawing.dll `
   /win32icon:"whale.ico" /out:"DSH生物科研一键启动.exe" "DSH生物科研启动器.cs"
 ```
