@@ -1,0 +1,10 @@
+{
+  "name": "dsh-smart-approval",
+  "version": "0.1.0",
+  "description": "Smart approval: learn approved target directories and command kinds per session, auto-approve similar sandbox escalations, still ask for new locations.",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "files": [
+    "lib"
+  ]
+}
