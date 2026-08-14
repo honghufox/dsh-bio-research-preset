@@ -1,12 +1,11 @@
-// DSH 生物科研模式一键启动器（系统托盘版）
+// DSH 生物科研模式一键启动器（系统托盘版 v3）
 // 编译:
 //   csc.exe /nologo /codepage:65001 /target:winexe /optimize
 //         /r:System.Windows.Forms.dll /r:System.Drawing.dll
 //         /win32icon:whale.ico /out:DSH生物科研一键启动.exe DSH生物科研启动器.cs
 // 行为: 无窗口、无任务栏按钮，只驻留系统托盘（黑鲸鱼图标）。
-//   启动时临时把默认预设切换为 bio-research -> 必要时后台启动 dsh web（日志写文件）
-//   -> 托盘气泡提示 -> 监控 3080 端口，DSH 停止后自动恢复默认预设并退出。
-// 用法: DSH生物科研一键启动.exe [--check]
+//   v3 修复: 异步启动不再卡死 UI；用批处理文件启动 dsh 规避 cmd 引号/重定向解析问题；
+//   单实例互斥（重复双击只打开浏览器）；「停止 DSH」按 3080 端口定位进程整树结束。
 using System;
 using System.Diagnostics;
 using System.Drawing;
@@ -14,21 +13,26 @@ using System.IO;
 using System.Net.Sockets;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
 
-class DshTrayLauncher : ApplicationContext
+class DshTrayApp : Form
 {
     const int PORT = 3080;
+    const string MutexName = "DSHBioResearchLauncher";
     static readonly string HomeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     static readonly string SettingsPath = Path.Combine(HomeDir, ".dsh", "settings.yaml");
     static readonly string BakPath = SettingsPath + ".launcher-bak";
     static readonly string Workspace = Directory.Exists("G:\\dsh") ? "G:\\dsh" : HomeDir;
     static readonly string LogFile = Path.Combine(Workspace, "dsh-web.log");
-    static readonly string CheckFile = Path.Combine(Path.GetDirectoryName(typeof(DshTrayLauncher).Assembly.Location) ?? ".", "check-result.txt");
+    static readonly string ExeDir = Path.GetDirectoryName(typeof(DshTrayApp).Assembly.Location) ?? ".";
+    static readonly string CheckFile = Path.Combine(ExeDir, "check-result.txt");
+    static readonly string BatFile = Path.Combine(ExeDir, "start-dsh.bat");
 
     NotifyIcon trayIcon;
-    Timer monitor;
-    Process dshProcess;
+    System.Windows.Forms.Timer monitor;
+    Process dshProc;
     bool startedByUs = false;
     bool exited = false;
 
@@ -37,14 +41,33 @@ class DshTrayLauncher : ApplicationContext
     {
         if (HasArg(args, "--check"))
             return DoCheck();
-        Application.EnableVisualStyles();
-        Application.Run(new DshTrayLauncher());
+
+        bool createdNew;
+        using (Mutex m = new Mutex(true, MutexName, out createdNew))
+        {
+            if (!createdNew)
+            {
+                // 已有实例在托盘运行：重复双击只打开浏览器
+                try { Process.Start("http://127.0.0.1:" + PORT); }
+                catch { }
+                return 0;
+            }
+            Application.EnableVisualStyles();
+            Application.Run(new DshTrayApp());
+        }
         return 0;
     }
 
-    DshTrayLauncher()
+    DshTrayApp()
     {
-        // 1. 备份并切换默认预设
+        // 隐藏窗口作为消息循环宿主（保证 BeginInvoke 可用）
+        ShowInTaskbar = false;
+        WindowState = FormWindowState.Minimized;
+        Opacity = 0;
+        Show();
+        Hide();
+
+        // 1. 备份并切换默认预设（快速，无 UI）
         try
         {
             string original = File.Exists(SettingsPath) ? File.ReadAllText(SettingsPath, Encoding.UTF8) : "";
@@ -58,7 +81,7 @@ class DshTrayLauncher : ApplicationContext
             return;
         }
 
-        // 2. 托盘图标（黑鲸鱼，取自 exe 自身嵌入图标）
+        // 2. 托盘图标（黑鲸鱼，取自 exe 嵌入图标）
         Icon appIcon;
         try { appIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
         catch { appIcon = SystemIcons.Application; }
@@ -76,33 +99,11 @@ class DshTrayLauncher : ApplicationContext
         trayIcon.ContextMenuStrip = menu;
         trayIcon.DoubleClick += (s, e) => OpenBrowser();
 
-        // 3. 启动 DSH（未运行时）
-        if (!PortOpen(PORT))
-        {
-            Balloon("生物科研模式", "正在后台启动 dsh web ...");
-            StartDsh();
-            int waited = 0;
-            while (!PortOpen(PORT) && waited < 180000)
-            {
-                System.Threading.Thread.Sleep(2000);
-                waited += 2000;
-            }
-            if (!PortOpen(PORT))
-            {
-                Balloon("启动失败", "DSH 180 秒内未就绪，请查看日志: " + LogFile);
-                Exit(true);
-                return;
-            }
-            Balloon("生物科研模式已就绪", "http://127.0.0.1:" + PORT + Environment.NewLine + "日志: " + LogFile);
-        }
-        else
-        {
-            Balloon("生物科研模式", "DSH 已在运行，直接使用: http://127.0.0.1:" + PORT);
-        }
-        OpenBrowser();
+        // 3. 异步启动流程（不阻塞 UI 线程）
+        Task.Run((Action)Startup);
 
-        // 4. 监控 DSH 状态（每 5 秒）
-        monitor = new Timer();
+        // 4. 监控 DSH 状态
+        monitor = new System.Windows.Forms.Timer();
         monitor.Interval = 5000;
         monitor.Tick += delegate(object s, EventArgs e)
         {
@@ -115,17 +116,58 @@ class DshTrayLauncher : ApplicationContext
         monitor.Start();
     }
 
+    // 后台线程: 启动 DSH（若未运行）→ 等就绪 → 打开浏览器
+    void Startup()
+    {
+        try
+        {
+            if (!PortOpen(PORT))
+            {
+                Balloon("生物科研模式", "正在后台启动 dsh web ...");
+                StartDsh();
+                int waited = 0;
+                while (!PortOpen(PORT) && waited < 180000)
+                {
+                    Thread.Sleep(2000);
+                    waited += 2000;
+                }
+                if (!PortOpen(PORT))
+                {
+                    Balloon("启动失败", "DSH 180 秒内未就绪，请查看日志: " + LogFile);
+                    Exit(true);
+                    return;
+                }
+                Balloon("生物科研模式已就绪", "http://127.0.0.1:" + PORT + Environment.NewLine + "日志: " + LogFile);
+            }
+            else
+            {
+                Balloon("生物科研模式", "DSH 已在运行，直接使用: http://127.0.0.1:" + PORT);
+            }
+            OpenBrowser();
+        }
+        catch (Exception ex)
+        {
+            Balloon("启动异常", ex.Message);
+            Exit(true);
+        }
+    }
+
+    // 用批处理文件启动 dsh（规避 cmd /c "..." 重定向被吞的解析问题）
     void StartDsh()
     {
         try
         {
-            string args = "/c \"dsh web\" > \"" + LogFile + "\" 2>&1";
-            ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", args);
+            StringBuilder sb = new StringBuilder();
+            sb.AppendLine("@echo off");
+            sb.AppendLine("\"dsh\" web > \"" + LogFile + "\" 2>&1");
+            File.WriteAllText(BatFile, sb.ToString(), new UTF8Encoding(false));
+
+            ProcessStartInfo psi = new ProcessStartInfo("cmd.exe", "/c \"" + BatFile + "\"");
             psi.WorkingDirectory = Workspace;
             psi.UseShellExecute = false;
             psi.CreateNoWindow = true;
             psi.WindowStyle = ProcessWindowStyle.Hidden;
-            dshProcess = Process.Start(psi);
+            dshProc = Process.Start(psi);
             startedByUs = true;
         }
         catch (Exception ex)
@@ -136,18 +178,15 @@ class DshTrayLauncher : ApplicationContext
 
     void StopDsh()
     {
-        // 1. 若 DSH 由本启动器启动，先结束其进程树
-        if (startedByUs && dshProcess != null)
+        if (startedByUs && dshProc != null)
         {
-            try { if (!dshProcess.HasExited) KillTree(dshProcess.Id); }
+            try { if (!dshProc.HasExited) KillTree(dshProc.Id); }
             catch { }
         }
-        // 2. 按 3080 端口定位实际监听的进程（可能由外部终端启动的孤儿实例），整树结束
         int pid = FindPidOnPort(PORT);
         if (pid > 0) KillTree(pid);
     }
 
-    // 找到监听指定端口的进程 PID（netstat -ano 解析）
     static int FindPidOnPort(int port)
     {
         try
@@ -204,9 +243,17 @@ class DshTrayLauncher : ApplicationContext
         catch { }
     }
 
+    // 气泡提示：必须回到 UI 线程
     void Balloon(string title, string text)
     {
-        try { trayIcon.ShowBalloonTip(4000, title, text, ToolTipIcon.Info); }
+        try
+        {
+            BeginInvoke(new Action(delegate()
+            {
+                try { if (trayIcon != null) trayIcon.ShowBalloonTip(4000, title, text, ToolTipIcon.Info); }
+                catch { }
+            }));
+        }
         catch { }
     }
 
@@ -214,9 +261,10 @@ class DshTrayLauncher : ApplicationContext
     {
         if (exited) return;
         exited = true;
-        if (restore) RestoreDefault();
-        if (monitor != null) { monitor.Stop(); monitor.Dispose(); }
-        if (trayIcon != null) { trayIcon.Visible = false; trayIcon.Dispose(); }
+        try { if (restore) RestoreDefault(); } catch { }
+        try { if (monitor != null) { monitor.Stop(); monitor.Dispose(); } } catch { }
+        try { if (trayIcon != null) { trayIcon.Visible = false; trayIcon.Dispose(); } } catch { }
+        try { Close(); } catch { }
         Application.Exit();
     }
 
@@ -241,7 +289,7 @@ class DshTrayLauncher : ApplicationContext
         catch { }
     }
 
-    // 自检: 切换预设 -> 检测端口 -> 恢复，结果写入 check-result.txt（无 UI）
+    // 自检: 切换预设 -> 检测端口/PID -> 恢复，结果写 check-result.txt（无 UI）
     static int DoCheck()
     {
         string result;
@@ -267,7 +315,6 @@ class DshTrayLauncher : ApplicationContext
         return 0;
     }
 
-    // 在 settings.yaml 中把 agent-presets.default 设为 preset
     static string SetDefaultPreset(string content, string preset)
     {
         Regex rx1 = new Regex("(?m)^(\\s*agent-presets:\\s*\\r?\\n)(\\s*default:\\s*)[^\\r\\n]*");
