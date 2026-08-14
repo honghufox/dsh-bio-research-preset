@@ -7,6 +7,7 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
@@ -14,15 +15,28 @@ using System.Threading;
 class DshBioLauncher
 {
     const int PORT = 3080;
+    const int SW_MINIMIZE = 6;
     static readonly string HomeDir = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
     static readonly string SettingsPath = Path.Combine(HomeDir, ".dsh", "settings.yaml");
     static readonly string BakPath = SettingsPath + ".launcher-bak";
     static readonly string Workspace = Directory.Exists("G:\\dsh") ? "G:\\dsh" : HomeDir;
 
+    [DllImport("kernel32.dll")] static extern IntPtr GetConsoleWindow();
+    [DllImport("user32.dll")]   static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
     static int Main(string[] args)
     {
         bool check = HasArg(args, "--check");
         bool noBrowser = HasArg(args, "--no-browser");
+        bool noMinimize = HasArg(args, "--no-minimize");
+
+        // 默认把控制台窗口最小化到任务栏，降低误关闭几率（自检模式保持可见）
+        if (!check && !noMinimize)
+        {
+            IntPtr hwnd = GetConsoleWindow();
+            if (hwnd != IntPtr.Zero)
+                ShowWindow(hwnd, SW_MINIMIZE);
+        }
 
         Console.WriteLine("==============================================");
         Console.WriteLine("  DSH 生物科研模式一键启动器");
@@ -60,7 +74,7 @@ class DshBioLauncher
             Console.WriteLine("[2/4] DSH 未运行，正在启动 dsh web（工作目录: " + Workspace + "）...");
             try
             {
-                var psi = new ProcessStartInfo("cmd.exe", "/c start \"DSH Web\" dsh web");
+                var psi = new ProcessStartInfo("cmd.exe", "/c start /min \"DSH Web\" dsh web");
                 psi.WorkingDirectory = Workspace;
                 psi.UseShellExecute = true;
                 Process.Start(psi);
@@ -101,7 +115,8 @@ class DshBioLauncher
         }
 
         // 4. 等待 DSH 停止 / Ctrl+C
-        Console.WriteLine("[4/4] DSH 运行中。关闭 DSH 窗口后本程序自动恢复默认预设；按 Ctrl+C 立即恢复并退出。");
+        Console.WriteLine("[4/4] DSH 运行中。窗口已最小化到任务栏（点击任务栏按钮查看状态）。");
+        Console.WriteLine("    关闭 DSH 窗口后本程序自动恢复默认预设；按 Ctrl+C 立即恢复并退出。");
         Console.CancelKeyPress += delegate(object s, ConsoleCancelEventArgs e)
         {
             e.Cancel = true;
