@@ -37,6 +37,14 @@
    - zotero：`cd tools/zotero && npm install --ignore-scripts`，在 zotero.org/settings/keys 创建 API Key，填入 `agent.cordis.yml` 的 `ZOTERO_API_KEY` / `ZOTERO_USER_ID` 并删除 `disabled: true`
 4. 可选科学栈：`pip install --user pandas numpy scipy statsmodels seaborn scikit-learn biopython lifelines vcfpy python-docx`；R 建议装 `survival survminer rms vcfR biomaRt`
 
+## 从零部署新电脑
+
+完整手动指南见 [`docs/新机器部署指南.md`](docs/新机器部署指南.md)，或直接在新电脑的普通 PowerShell 运行一键脚本：
+
+```powershell
+.\docs\setup-dsh-new-machine.ps1   # 自动完成 DSH 安装、预设克隆、Python 包、MCP 依赖
+```
+
 ## 目录结构
 
 ```
