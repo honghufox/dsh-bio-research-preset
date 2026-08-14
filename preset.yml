@@ -1,0 +1,2 @@
+name: 生物科研模式
+description: 面向基础生物学科研的 Agent：文献检索（PubMed/UniProt/KEGG/PDB 等 37 个生物信息 MCP 工具）、数据分析（Python/R）、发表级统计绘图、论文撰写与生信分析等 5 类技能，完整保留标准模式的编码能力。

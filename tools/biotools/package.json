@@ -1,0 +1,9 @@
+{
+  "name": "biotools-mcp-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Runtime manifest for the biotools MCP server (37 bioinformatics tools). Install with: npm install --ignore-scripts",
+  "dependencies": {
+    "bach-biotools-server": "^1.0.2"
+  }
+}

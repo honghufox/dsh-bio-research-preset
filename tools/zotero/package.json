@@ -1,0 +1,9 @@
+{
+  "name": "zotero-mcp-runtime",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Runtime manifest for the mcp-zotero MCP server (Zotero Web API). Install with: npm install --ignore-scripts",
+  "dependencies": {
+    "mcp-zotero": "^1.0.6"
+  }
+}

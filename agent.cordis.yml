@@ -1,0 +1,335 @@
+# The `bio-research` agent preset: the full coding agent from `standard`,
+# plus a biology-research persona, five research skills, and a bioinformatics
+# MCP server (PubMed/UniProt/GenBank/Ensembl/KEGG/PDB, 37 tools).
+#
+# This file is an AGENT-PLANE composition. The roster mounts it ONCE under a
+# standing scope; every session naming it joins by scope parentage, so the
+# tools and prompt sections registered here cover each joined agent while a
+# session's own state stays keyed per Session/Agent inside the plugins. The
+# host composition (`base.cordis.yml` + `web.cordis.yml`) keeps everything a
+# preset must not own: the registries themselves, the sandbox and approval
+# stack, persistence, and the model route.
+#
+# A service row here MUST sit inside a group carrying an `isolate` realm.
+# Without one it publishes into the root realm, where it is process-global —
+# another preset publishing the same name collides, and a host reader would
+# resolve one preset's instance for every session; `dsh-agent-presets` rejects
+# that at mount. `true` means an entry-local realm: this standing mount's own
+# private instance, apart from every other preset's.
+
+# ── identity ────────────────────────────────────────────────────────────────
+
+# The preset's own persona, shadowing the deployment default for this agent.
+# `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
+- id: persona
+  name: '@deepseek-ai/dsh-persona'
+  config:
+    text: >-
+      You are a biology research assistant powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
+
+      服务对象是基础生物学科研工作者（分子生物学 / 细胞生物学 / 生物化学方向），研究重点为**基因组学分析（变异/VCF 数据）与生存分析**。在科研全流程中提供帮助：
+
+      【文献检索与综述】优先使用 biotools MCP 工具（mcp__biotools__search_pubmed / get_publication_details / get_publication_abstract）检索 PubMed，也可用 web_search。整理文献、撰写综述时给出 PMID/DOI，绝不编造文献。
+
+      【基因组学与变异分析】VCF 变异数据处理、过滤、注释与可视化用 variant-analysis 技能（Python vcfpy / R vcfR / biomaRt）；不做 BAM/FASTQ 原始数据质控（本机未装相应工具）。
+
+      【生存分析】KM / log-rank / Cox 回归 / 时间依赖 ROC / 竞争风险 / 列线图 / 表达-生存分析用 survival-analysis 技能（Python lifelines + R survival/survminer/rms）。
+
+      【数据分析】用 Python（pandas / numpy / scipy / statsmodels / seaborn / lifelines，均已安装）或 R 4.5 编写脚本；数据文件放在工作区，脚本可重复运行；统计检验需说明适用条件，报告效应量与 p 值，必要时做多重比较校正。
+
+      【图像绘制】产出发表级图表：matplotlib / seaborn 或 R ggplot2，输出 PNG(300dpi)/SVG/PDF 到 figures/ 目录，注意期刊尺寸与色盲友好配色。
+
+      【论文撰写】按 IMRaD 结构组织；提供学术英语润色、摘要撰写、参考文献格式化（给出 PMID/DOI 即可）。本机已装 TinyTeX（LaTeX 编译，见 latex-compile 技能）与 pandoc / python-docx（Markdown 转 Word/PDF，见 document-output 技能），支持完整的论文产出流程。
+
+      【生信分析】序列获取 / 比对 / BLAST / 系统发育可用 biotools MCP 的 37 个工具；本地 Python 有 Biopython，R 有 vcfR / survival 等。预设中还预装了 ncbi-mcp 与 mcp-zotero（按 agent.cordis.yml 中注释启用）。
+
+      默认用中文回复；用户要求或撰写英文论文时用英文输出。
+
+- id: agent-instructions
+  name: '@deepseek-ai/dsh-agent-instructions'
+  config:
+    maxBytes: 65536
+
+# ── shell ───────────────────────────────────────────────────────────────────
+
+# `shell-env` stays in the HOST composition: `apps/cli/src/web.ts` injects it to
+# publish `DSH_WEB_URL`/`DSH_WEB_MODE`, and a host row that injects a service is
+# the criterion for host-plane ownership — injection resolves before any session
+# exists, so there is no agent to key by. Behind a preset realm those variables
+# never reached the model's shell at all. Both shell tools consume the host
+# registry from here; their executors (`bash-sandbox`/`pwsh-sandbox`) are
+# host-plane too.
+- id: tool-bash
+  name: '@deepseek-ai/dsh-tool-bash'
+  disabled: !!js process.platform === 'win32'
+
+- id: tool-pwsh
+  name: '@deepseek-ai/dsh-tool-pwsh'
+  disabled: !!js process.platform !== 'win32'
+
+# ── filesystem ──────────────────────────────────────────────────────────────
+
+# Both register into the host `tools` registry and provide nothing, so
+# they need no realm. The `fs` service and its policy stay in the host.
+- id: tool-fs
+  name: '@deepseek-ai/dsh-tool-fs'
+
+- id: tool-fs-search
+  name: '@deepseek-ai/dsh-tool-fs-search'
+  config:
+    sampleOverCapGlobResults: false
+
+# ── background jobs ────────────────────────────────────────────────────────
+
+# Only the model-facing controls. The task REGISTRY stays on the host plane:
+# its producers sit outside any realm this file could put it in — `tool-bash`
+# above resolves it with `ctx.get`, and an entry-local realm here is invisible
+# to every sibling row, so `run_in_background` would answer "background jobs
+# unavailable" while these controls sat in the catalog. The registry is keyed by
+# owning agent anyway, so one host instance serves every session. What a preset
+# chooses is whether its agent can collect and stop background work at all.
+- id: tool-jobs
+  name: '@deepseek-ai/dsh-tool-jobs'
+
+# ── skills ──────────────────────────────────────────────────────────────────
+
+# The skill REGISTRY lives in the host composition and is layered per scope:
+# these rows register into THIS preset's layer of it, so they need no realm.
+# `skill-filesystem` contributes local-root discovery for agents on this preset
+# and the research skills shipped inside the preset directory (via
+# `customSkillDirs`, resolved from `baseUrl` like the shipped `cordis` preset
+# does), and `tool-skill` gives them the catalog and loader; the merged catalog
+# also carries whatever the deployment registered globally (repository plugins).
+- id: skill-filesystem
+  name: '@deepseek-ai/dsh-skill-filesystem'
+  config:
+    customSkillDirs:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', baseUrl))"
+
+- id: tool-skill
+  name: '@deepseek-ai/dsh-tool-skill'
+
+# ── bioinformatics MCP ──────────────────────────────────────────────────────
+
+# The biotools MCP server (37 tools: PubMed / UniProtKB / GenBank / Ensembl /
+# KEGG / PDB) runs locally from the preset's own `tools/` directory, spawned
+# over stdio. It consumes the host `tools` registry and provides nothing, so it
+# needs no realm. `failOnStartupError: false` keeps the preset mountable even if
+# the server is temporarily unavailable; `toolCallTimeoutMs` gives bioinformatics
+# calls (BLAST, alignments, trees) headroom over the default 60s.
+- id: mcp-biotools
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: biotools
+    transport: stdio
+    command: node
+    args:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('tools/biotools/node_modules/bach-biotools-server/build/index.js', baseUrl))"
+    failOnStartupError: false
+    toolCallTimeoutMs: 120000
+
+# ── NCBI E-utilities MCP ─────────────────────────────────────────────────────
+
+# ncbi-mcp（PyPI 0.1.4）提供 E-utilities 批量检索工具。安装：pip install --user ncbi-mcp
+# 注意：其依赖的 mcp SDK 需为 1.x（2.0 移除了 FastMCP API）：pip install "mcp>=1.0,<2"
+# NCBI 要求 E-utilities 请求携带真实邮箱（下方占位符请替换为你自己的邮箱）。
+# 如需提高限速，可在 https://www.ncbi.nlm.nih.gov/account/settings/ 免费申请 API Key
+# 填入 NCBI_API_KEY（或设置同名环境变量）。
+- id: mcp-ncbi
+  name: '@deepseek-ai/dsh-mcp-client'
+  config:
+    serverName: ncbi
+    transport: stdio
+    command: python
+    args:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('tools/ncbi/run-ncbi-mcp.py', baseUrl))"
+    env:
+      NCBI_EMAIL: your_email@example.com
+      NCBI_API_KEY: !!js "process.env.NCBI_API_KEY ?? ''"
+    failOnStartupError: false
+    toolCallTimeoutMs: 60000
+
+# ── Zotero 文献库 MCP（默认禁用，需凭证）────────────────────────────────────
+
+# mcp-zotero（npm 1.0.6，已装在预设 tools/zotero 下）通过 Zotero 官方 Web API
+# 检索/管理你的文献库。服务器在缺少凭证时会直接退出，因此默认禁用。启用步骤：
+#   1. 在 https://www.zotero.org/settings/keys 创建 API Key
+#   2. 用该 Key 请求 https://api.zotero.org/keys/current 获取你的 User ID
+#   3. 填入下方 ZOTERO_API_KEY / ZOTERO_USER_ID，并删除 `disabled: true`
+- id: mcp-zotero
+  name: '@deepseek-ai/dsh-mcp-client'
+  disabled: true
+  config:
+    serverName: zotero
+    transport: stdio
+    command: node
+    args:
+      - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('tools/zotero/node_modules/mcp-zotero/build/server.js', baseUrl))"
+    env:
+      ZOTERO_API_KEY: ''
+      ZOTERO_USER_ID: ''
+    failOnStartupError: false
+
+# ── goals ───────────────────────────────────────────────────────────────────
+
+# Only the model-facing tool. The goal SERVICE, its session driver, and the
+# `/goal` command stay on the host plane: the Gateway serves the goal domain as
+# Remote endpoints whose receiver comes from a generated descriptor, so it
+# resolves `goals` on the host and an entry-local realm here would hide it. The
+# registry is keyed by session anyway, so one host instance serves every
+# session. What a preset chooses is whether its agent can call the goal tool.
+- id: tool-goal
+  name: '@deepseek-ai/dsh-tool-goal'
+
+# ── plan mode ───────────────────────────────────────────────────────────────
+
+# Plan state is per-agent by nature, so an entry-local realm is not a
+# workaround here — it is the correct lifetime.
+- id: planning
+  name: cordis:group
+  group: true
+  isolate:
+    planMode: true
+  config:
+    - id: plan-mode
+      name: '@deepseek-ai/dsh-plan-mode'
+      config:
+        section: |
+              You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+              Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+              The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+              Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+              Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+              When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+
+# ── compaction ──────────────────────────────────────────────────────────────
+
+# `compaction-basic` reads `toolResultPrune` through `ctx.get`, so the pruner must
+# share this realm rather than sit outside it.
+#
+# `tokenMeter` is deliberately NOT in this realm: the meter stays on the HOST
+# plane, and the rows here resolve that one instance. It takes no configuration,
+# keys every fold by Session, and owns the context-meter projection units the
+# browser reads for every session — behind a realm those units would come and go
+# with whichever presets happen to be mounted. What a preset chooses is whether
+# its agent compacts at all, which is `compaction-basic` below.
+- id: compaction
+  name: cordis:group
+  group: true
+  isolate:
+    compaction: true
+    toolResultPruner: true
+  config:
+    - id: compaction-basic
+      name: '@deepseek-ai/dsh-compaction-basic'
+
+    - id: command-compact
+      name: '@deepseek-ai/dsh-command-compact'
+
+    - id: tool-result-pruner
+      name: '@deepseek-ai/dsh-compaction-tool-result-pruner'
+      config:
+        thresholdChars: 8192
+        headChars: 4096
+        tailChars: 1024
+
+# ── delegation and workflows ────────────────────────────────────────────────
+
+# The `subagents` registry and its spawn/fork backends live in the HOST
+# composition: the registry is a process singleton whose cross-session queries
+# the api-proxy serves to the browser, and a provider name may only be
+# registered once. This preset contributes the delegation TOOLS, which resolve
+# that host registry.
+#
+# `workflows` is different — nothing outside an agent reads it — so every row
+# that reaches it shares one entry-local realm here, and a consumer left
+# outside would resolve a host registry this preset does not populate.
+#
+# `tool-subagent-report` is host-plane for the same reason as the registry,
+# not because a preset may not want it: it registers a CONTINUABLE SETUP on
+# that singleton rather than a tool this agent calls, and the setup list is
+# not scope-aware — one copy per mounted preset means every child gets
+# `report` registered once per live session, which throws on the second.
+- id: delegation
+  name: cordis:group
+  group: true
+  isolate:
+    workflowEngine: true
+  config:
+    - id: tool-subagent-control
+      name: '@deepseek-ai/dsh-tool-subagent-control'
+
+    - id: tool-subagent-list-agents
+      name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+
+    - id: tool-subagent
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: spawn
+        toolName: subagent
+        backgroundMode: continuable
+
+    - id: tool-subagent-fork
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: fork
+        toolName: subagent_fork
+        backgroundMode: continuable
+
+    # Product providers are host-plane singletons. Copy this preset, then
+    # remove `disabled` from either ordinary tool row to expose that product
+    # only to agents composed from the copy.
+    - id: tool-subagent-codex
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: codex
+        toolName: subagent_codex
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: tool-subagent-claude-code
+      name: '@deepseek-ai/dsh-tool-subagent'
+      disabled: true
+      config:
+        provider: claude-code
+        toolName: subagent_claude_code
+        enableRunInBackground: false
+        maxDepth: provider-managed
+
+    - id: workflow-worker-thread
+      name: '@deepseek-ai/dsh-workflow-worker-thread'
+      config:
+        provider: spawn
+
+    - id: tool-workflow
+      name: '@deepseek-ai/dsh-tool-workflow'
+
+    - id: tool-ralph
+      name: '@deepseek-ai/dsh-tool-ralph'
+      config:
+        subagentProvider: spawn
+        maxRounds: 64
+
+# ── remaining model-facing rows ─────────────────────────────────────────────
+
+- id: tool-ask-user
+  name: '@deepseek-ai/dsh-tool-ask-user'
+
+- id: tool-todo
+  name: '@deepseek-ai/dsh-tool-todo'
+  config:
+    allowParallelInProgress: true
+
+# The `web` service and its search provider stay in the host composition; only
+# the model-facing tool is per-session.
+- id: tool-web
+  name: '@deepseek-ai/dsh-tool-web'
+  config:
+    fetch: false
+    searchTimeoutMs: 60000

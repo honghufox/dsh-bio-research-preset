@@ -1,0 +1,7 @@
+# Dependencies (install via tools/*/package.json with npm install --ignore-scripts)
+node_modules/
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+*.log
