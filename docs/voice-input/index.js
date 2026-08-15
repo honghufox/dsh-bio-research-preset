@@ -13,16 +13,22 @@ module.exports = {
   apply(ctx) {
     const MODEL = 'G:/dsh/_tools/asr/sherpa-onnx-streaming-paraformer-bilingual-zh-en';
     const PY = 'G:/dsh/_tools/asr/stream-recognize.py';
-    const PORT = 8765;
+    const PORT = Number(process.env.DSH_VOICE_PORT || 8765);
     let state = null; // { handle, offset, mode, lastText }
 
     function readOut(handle, offset) {
       const read = handle.collected.stdout.readFrom(offset);
       let last = '';
+      let found = false;
       for (const l of read.text.split('\n')) {
-        if (l.startsWith('TEXT: ')) last = l.slice(6).trim();
+        if (l.startsWith('TEXT: ')) {
+          last = l.slice(6).trim();
+          found = true;
+        }
       }
-      return { nextOffset: read.nextOffset, text: read.text, last: last || read.text.trim() };
+      // found=true: the last TEXT line wins (even when empty -> keep previous lastText)
+      // found=false: no TEXT lines at all (SAPI mode) -> raw output as-is
+      return { nextOffset: read.nextOffset, text: read.text, last: found ? last : read.text.trim() };
     }
 
     function applyRead(st, r) {
