@@ -28,7 +28,7 @@ import sounddevice as sd
 import sherpa_onnx
 
 STREAM_DIR = r"G:\dsh\_tools\asr\sherpa-onnx-streaming-paraformer-bilingual-zh-en"
-OFFLINE_DIR = r"G:\dsh\_tools\asr\sherpa-onnx-paraformer-zh-int8-2025-10-07"
+OFFLINE_DIR = r"G:\dsh\_tools\asr\sherpa-onnx-whisper-base"
 TAIL_SILENCE = 0.5  # seconds fed at endpoint so the last word is decoded
 
 
@@ -113,15 +113,16 @@ def main():
         if release.is_set():
             break
 
-    # ---- offline refinement on the full recording ----
+    # ---- offline refinement on the full recording (whisper-base: zh+en) ----
     try:
-        offline = sherpa_onnx.OfflineRecognizer.from_paraformer(
-            paraformer=offline_dir + r"\model.int8.onnx",
-            tokens=offline_dir + r"\tokens.txt",
+        offline = sherpa_onnx.OfflineRecognizer.from_whisper(
+            encoder=offline_dir + r"\base-encoder.int8.onnx",
+            decoder=offline_dir + r"\base-decoder.int8.onnx",
+            tokens=offline_dir + r"\base-tokens.txt",
             num_threads=2,
-            sample_rate=16000,
-            feature_dim=80,
             decoding_method="greedy_search",
+            language="",
+            task="transcribe",
         )
         audio = np.concatenate(recording) if recording else np.zeros(0, dtype=np.float32)
         tail = np.zeros(int(0.66 * 16000), dtype=np.float32)
