@@ -28,7 +28,7 @@ import sounddevice as sd
 import sherpa_onnx
 
 STREAM_DIR = r"G:\dsh\_tools\asr\sherpa-onnx-streaming-paraformer-bilingual-zh-en"
-OFFLINE_DIR = r"G:\dsh\_tools\asr\sherpa-onnx-whisper-small"
+SENSE_DIR = r"G:\dsh\_tools\asr\sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17"
 TAIL_SILENCE = 0.5  # seconds fed at endpoint so the last word is decoded
 
 
@@ -38,17 +38,18 @@ def drain(recognizer, stream):
 
 
 def clean(text):
-    """Strip special tokens like <s>, </s>, <blank> and collapse whitespace."""
+    """Strip special tokens (whisper <s>/</s>/<blank>, SenseVoice <|zh|> etc.)
+    and collapse whitespace."""
     if not text:
         return ""
     import re
-    text = re.sub(r"<[^>]*>", "", text)
+    text = re.sub(r"<\|?[^>]*\|?>", "", text)
     return re.sub(r"\s+", " ", text).strip()
 
 
 def main():
     stream_dir = sys.argv[1] if len(sys.argv) > 1 else STREAM_DIR
-    offline_dir = sys.argv[2] if len(sys.argv) > 2 else OFFLINE_DIR
+    offline_dir = SENSE_DIR  # offline refinement model (SenseVoice); argv[2] is legacy
     file_path = None
     if len(sys.argv) > 3 and sys.argv[3].startswith("--file="):
         file_path = sys.argv[3][7:]
@@ -124,25 +125,22 @@ def main():
         if release.is_set():
             break
 
-    # ---- offline refinement on the full recording (whisper-small: zh+en) ----
-    # The streaming paraformer is bilingual; count CJK vs Latin chars in its
-    # accumulated text to pick the whisper language (single-language lock-in
-    # garbles the other language, e.g. auto-detect -> en -> Chinese mojibake).
+    # ---- offline refinement on the full recording (SenseVoice, zh+en+more) ----
+    # SenseVoice (Alibaba, via sherpa-onnx) replaces the earlier whisper-small
+    # pass: it is a purpose-built ASR with far better zh/en code-switching,
+    # punctuation, and ITN (digit normalization), and it does NOT drop chars
+    # (e.g. 体 in 具体) the way whisper-small did. Language hint keeps it on
+    # Chinese when the stream shows CJK, English otherwise.
     stream_text = last_full or " ".join(committed)
     n_cjk = sum(1 for ch in stream_text if "\u4e00" <= ch <= "\u9fff")
-    # Chinese-dominant user: any CJK -> zh (whisper keeps embedded English terms
-    # like gene names in zh mode); pure English -> en. (auto-detect locks to en
-    # on mixed speech and garbles the Chinese part.)
     lang = "zh" if n_cjk > 0 else "en"
     try:
-        offline = sherpa_onnx.OfflineRecognizer.from_whisper(
-            encoder=offline_dir + r"\small-encoder.int8.onnx",
-            decoder=offline_dir + r"\small-decoder.int8.onnx",
-            tokens=offline_dir + r"\small-tokens.txt",
+        offline = sherpa_onnx.OfflineRecognizer.from_sense_voice(
+            model=offline_dir + r"\model.int8.onnx",
+            tokens=offline_dir + r"\tokens.txt",
             num_threads=2,
-            decoding_method="greedy_search",
             language=lang,
-            task="transcribe",
+            use_itn=True,
         )
         audio = np.concatenate(recording) if recording else np.zeros(0, dtype=np.float32)
         tail = np.zeros(int(0.66 * 16000), dtype=np.float32)
@@ -155,50 +153,6 @@ def main():
         refined = ""
         sys.stderr.write("offline failed: %s\n" % e)
     if refined:
-        # Fusion guard: the offline whisper refinement sometimes DELETES or
-        # REPLACES a character the streaming recognizer already got right
-        # (systematically, e.g. 体 in 具体). Fall back to the streaming text
-        # when the refinement looks like a lossy edit:
-        #   1) strictly shorter + highly similar (pure deletion), or
-        #   2) CJK-dominant utterance with a real (non-filler) CJK char that
-        #      appears in the stream but is entirely absent from the refined
-        #      text (deletion or replacement by another char).
-        # Refinements that ADD context (recovering endpoint-truncated tails)
-        # or reword heavily (ratio low) are kept.
-        from difflib import SequenceMatcher
-        import json
-        orig_refined = refined
-        kept_stream = False
-        if stream_text:
-            sm = SequenceMatcher(None, stream_text, refined)
-            ratio = sm.ratio()
-            chars = [c for c in stream_text if not c.isspace()]
-            cjk = [c for c in chars if "\u4e00" <= c <= "\u9fff"]
-            cjk_ratio = len(cjk) / len(chars) if chars else 0.0
-            filler = set("嗯啊呃哦噢嘛呢吧呀哈")
-            refined_set = set(refined)
-            real_missing = [c for c in cjk if c not in refined_set and c not in filler]
-            if len(refined) < len(stream_text) and ratio > 0.85 and real_missing:
-                kept_stream = True
-            elif cjk_ratio >= 0.5 and ratio > 0.7 and real_missing:
-                kept_stream = True
-            if kept_stream:
-                refined = stream_text
-            try:
-                with open(r"G:\dsh\_tools\asr\fusion_debug.jsonl", "a", encoding="utf-8") as dbg:
-                    dbg.write(json.dumps({
-                        "stream": stream_text,
-                        "orig_refined": orig_refined,
-                        "final": refined,
-                        "ratio": round(ratio, 3),
-                        "len_stream": len(stream_text),
-                        "len_refined": len(orig_refined),
-                        "cjk_ratio": round(cjk_ratio, 3),
-                        "missing": real_missing[:10],
-                        "kept_stream": kept_stream,
-                    }, ensure_ascii=False) + "\n")
-            except Exception:
-                pass
         sys.stdout.write("FINAL: " + refined + "\n")
     else:
         sys.stdout.write("FINAL: " + " ".join(committed) + "\n")
