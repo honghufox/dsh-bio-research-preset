@@ -29,6 +29,7 @@ function fakeHandle() {
   let buf = 'READY\n';
   let doneResolve = null;
   return {
+    stdin: { write() { doneResolve({ exitCode: 0, signal: null }); } }, // script exits after finalize
     collected: {
       stdout: {
         readFrom(offset) {
@@ -113,6 +114,17 @@ function makeCtx(handle) {
   r = await fetch(BASE + '/asr/stop', { method: 'POST' });
   const stopJson = await r.json();
   ok('stop returns final text (zh, byte-offset safe)', stopJson.ok === true && stopJson.text === '你好世界测试');
+
+  // REFINEMENT: a FINAL: line (offline model) wins over the streaming text
+  handle._write('TEXT: 粗略识别结果\n');
+  r = await fetch(BASE + '/asr/start', { method: 'POST' });
+  await r.json();
+  r = await fetch(BASE + '/asr/peek');
+  await r.json();
+  handle._write('FINAL: 精校后的准确文本\n');
+  r = await fetch(BASE + '/asr/stop', { method: 'POST' });
+  const stopRefined = await r.json();
+  ok('stop prefers FINAL refined text', stopRefined.ok === true && stopRefined.text === '精校后的准确文本' && stopRefined.refined === true);
 
   // stop again -> no active recording
   r = await fetch(BASE + '/asr/stop', { method: 'POST' });

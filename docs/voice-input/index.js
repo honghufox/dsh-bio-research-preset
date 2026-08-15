@@ -12,6 +12,7 @@ module.exports = {
   inject: ['subprocess', 'timer'],
   apply(ctx) {
     const MODEL = 'G:/dsh/_tools/asr/sherpa-onnx-streaming-paraformer-bilingual-zh-en';
+    const OFFLINE_MODEL = 'G:/dsh/_tools/asr/sherpa-onnx-paraformer-zh-int8-2025-10-07';
     const PY = 'G:/dsh/_tools/asr/stream-recognize.py';
     const PORT = Number(process.env.DSH_VOICE_PORT || 8765);
     let state = null; // { handle, offset, mode, lastText }
@@ -20,15 +21,18 @@ module.exports = {
       const read = handle.collected.stdout.readFrom(offset);
       let last = '';
       let found = false;
+      let finalText = '';
       for (const l of read.text.split('\n')) {
         if (l.startsWith('TEXT: ')) {
           last = l.slice(6).trim();
           found = true;
+        } else if (l.startsWith('FINAL: ')) {
+          finalText = l.slice(7).trim();
         }
       }
       // found=true: the last TEXT line wins (even when empty -> keep previous lastText)
       // found=false: no TEXT lines at all (SAPI mode) -> raw output as-is
-      return { nextOffset: read.nextOffset, text: read.text, last: found ? last : read.text.trim() };
+      return { nextOffset: read.nextOffset, text: read.text, last: found ? last : read.text.trim(), finalText: finalText };
     }
 
     function applyRead(st, r) {
@@ -40,10 +44,10 @@ module.exports = {
     async function startSherpa() {
       const exe = await ctx.subprocess.resolveExecutable('python');
       const handle = ctx.subprocess.spawn({
-        argv: [exe, PY, MODEL],
+        argv: [exe, PY, MODEL, OFFLINE_MODEL],
         cwd: 'G:/dsh',
         env: { PYTHONIOENCODING: 'utf-8' },
-        stdio: { stdin: 'ignore', stdout: { maxBytes: 262144, spill: { maxBytes: 1048576 } }, stderr: { maxBytes: 65536 } },
+        stdio: { stdin: 'pipe', stdout: { maxBytes: 262144, spill: { maxBytes: 1048576 } }, stderr: { maxBytes: 65536 } },
         graceMs: 5000,
       });
       let exited = null;
@@ -113,9 +117,20 @@ module.exports = {
       if (!state) return { ok: false, text: '', error: '没有进行中的录音' };
       const st = state;
       state = null;
+      try {
+        // signal the recognizer to finalize: it runs the offline model and
+        // prints `FINAL: <refined text>` then exits
+        if (st.handle.stdin) {
+          st.handle.stdin.write('f\n');
+        }
+      } catch (e) { /* noop */ }
+      // wait for the script to finish (FINAL printed, process exits) or timeout
+      await Promise.race([st.handle.done, ctx.timer.timeout(15000).then(() => null)]);
       try { st.handle.terminate(); } catch (e) { /* noop */ }
-      await Promise.race([st.handle.done, ctx.timer.timeout(5000).then(() => null)]);
-      const text = applyRead(st, readOut(st.handle, st.offset)) || st.lastText;
+      const r = readOut(st.handle, st.offset);
+      st.offset = r.nextOffset;
+      if (r.finalText) return { ok: true, text: r.finalText, mode: st.mode, refined: true };
+      const text = applyRead(st, r) || st.lastText;
       return { ok: true, text: text, mode: st.mode };
     }
 
