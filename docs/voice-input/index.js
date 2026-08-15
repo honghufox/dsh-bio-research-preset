@@ -42,6 +42,7 @@ module.exports = {
       const handle = ctx.subprocess.spawn({
         argv: [exe, PY, MODEL],
         cwd: 'G:/dsh',
+        env: { PYTHONIOENCODING: 'utf-8' },
         stdio: { stdin: 'ignore', stdout: { maxBytes: 262144, spill: { maxBytes: 1048576 } }, stderr: { maxBytes: 65536 } },
         graceMs: 5000,
       });

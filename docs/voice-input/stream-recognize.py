@@ -10,6 +10,11 @@ bug). Tail silence + input_finished flush the final result.
 import sys
 import time
 
+# Force UTF-8 on stdout: on Chinese Windows the default pipe encoding is GBK,
+# which garbles when the host decodes the stream as UTF-8.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+
 import numpy as np
 import sounddevice as sd
 import sherpa_onnx
