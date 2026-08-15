@@ -100,6 +100,7 @@ def main():
                 yield np.asarray(chunk, dtype=np.int16).reshape(-1).astype(np.float32) / 32768.0
 
     last_print = 0.0
+    last_full = ""
     for samples in chunks():
         recording.append(samples)
         s.accept_waveform(16000, samples)
@@ -117,6 +118,7 @@ def main():
             last_print = now
             partial = clean(stream_recognizer.get_result(s))
             full = " ".join(committed + ([partial] if partial else []))
+            last_full = full
             sys.stdout.write("TEXT: " + full + "\n")
             sys.stdout.flush()
         if release.is_set():
@@ -126,7 +128,7 @@ def main():
     # The streaming paraformer is bilingual; count CJK vs Latin chars in its
     # accumulated text to pick the whisper language (single-language lock-in
     # garbles the other language, e.g. auto-detect -> en -> Chinese mojibake).
-    stream_text = " ".join(committed)
+    stream_text = last_full or " ".join(committed)
     n_cjk = sum(1 for ch in stream_text if "\u4e00" <= ch <= "\u9fff")
     # Chinese-dominant user: any CJK -> zh (whisper keeps embedded English terms
     # like gene names in zh mode); pure English -> en. (auto-detect locks to en
@@ -153,6 +155,15 @@ def main():
         refined = ""
         sys.stderr.write("offline failed: %s\n" % e)
     if refined:
+        # Fusion guard: the offline whisper refinement sometimes DROPS a
+        # character the streaming recognizer already got right (e.g. 体 in 具体),
+        # especially mid-utterance. If the refined text is strictly shorter than
+        # the streaming text yet highly similar, it is a deletion, not a
+        # correction — keep the streaming text. (Refinements that ADD context,
+        # like recovering an endpoint-truncated tail, stay.)
+        from difflib import SequenceMatcher
+        if stream_text and len(refined) < len(stream_text) and SequenceMatcher(None, stream_text, refined).ratio() > 0.85:
+            refined = stream_text
         sys.stdout.write("FINAL: " + refined + "\n")
     else:
         sys.stdout.write("FINAL: " + " ".join(committed) + "\n")
