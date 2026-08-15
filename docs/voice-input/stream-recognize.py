@@ -155,15 +155,50 @@ def main():
         refined = ""
         sys.stderr.write("offline failed: %s\n" % e)
     if refined:
-        # Fusion guard: the offline whisper refinement sometimes DROPS a
-        # character the streaming recognizer already got right (e.g. 体 in 具体),
-        # especially mid-utterance. If the refined text is strictly shorter than
-        # the streaming text yet highly similar, it is a deletion, not a
-        # correction — keep the streaming text. (Refinements that ADD context,
-        # like recovering an endpoint-truncated tail, stay.)
+        # Fusion guard: the offline whisper refinement sometimes DELETES or
+        # REPLACES a character the streaming recognizer already got right
+        # (systematically, e.g. 体 in 具体). Fall back to the streaming text
+        # when the refinement looks like a lossy edit:
+        #   1) strictly shorter + highly similar (pure deletion), or
+        #   2) CJK-dominant utterance with a real (non-filler) CJK char that
+        #      appears in the stream but is entirely absent from the refined
+        #      text (deletion or replacement by another char).
+        # Refinements that ADD context (recovering endpoint-truncated tails)
+        # or reword heavily (ratio low) are kept.
         from difflib import SequenceMatcher
-        if stream_text and len(refined) < len(stream_text) and SequenceMatcher(None, stream_text, refined).ratio() > 0.85:
-            refined = stream_text
+        import json
+        orig_refined = refined
+        kept_stream = False
+        if stream_text:
+            sm = SequenceMatcher(None, stream_text, refined)
+            ratio = sm.ratio()
+            chars = [c for c in stream_text if not c.isspace()]
+            cjk = [c for c in chars if "\u4e00" <= c <= "\u9fff"]
+            cjk_ratio = len(cjk) / len(chars) if chars else 0.0
+            filler = set("嗯啊呃哦噢嘛呢吧呀哈")
+            refined_set = set(refined)
+            real_missing = [c for c in cjk if c not in refined_set and c not in filler]
+            if len(refined) < len(stream_text) and ratio > 0.85 and real_missing:
+                kept_stream = True
+            elif cjk_ratio >= 0.5 and ratio > 0.7 and real_missing:
+                kept_stream = True
+            if kept_stream:
+                refined = stream_text
+            try:
+                with open(r"G:\dsh\_tools\asr\fusion_debug.jsonl", "a", encoding="utf-8") as dbg:
+                    dbg.write(json.dumps({
+                        "stream": stream_text,
+                        "orig_refined": orig_refined,
+                        "final": refined,
+                        "ratio": round(ratio, 3),
+                        "len_stream": len(stream_text),
+                        "len_refined": len(orig_refined),
+                        "cjk_ratio": round(cjk_ratio, 3),
+                        "missing": real_missing[:10],
+                        "kept_stream": kept_stream,
+                    }, ensure_ascii=False) + "\n")
+            except Exception:
+                pass
         sys.stdout.write("FINAL: " + refined + "\n")
     else:
         sys.stdout.write("FINAL: " + " ".join(committed) + "\n")
