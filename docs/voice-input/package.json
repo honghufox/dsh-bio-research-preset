@@ -1,0 +1,30 @@
+{
+  "name": "dsh-voice-input",
+  "version": "0.3.0",
+  "description": "Voice input for DSH chat: press-and-hold to talk, live streaming text via local sherpa-onnx streaming paraformer (Chinese+English), SAPI fallback. Host HTTP server + web client bundle.",
+  "main": "lib/index.js",
+  "exports": {
+    ".": {
+      "default": "./lib/index.js"
+    },
+    "./client": {
+      "default": "./lib/client.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "dsh": {
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ],
+      "platform": "web"
+    }
+  },
+  "license": "MIT"
+}
