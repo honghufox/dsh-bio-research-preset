@@ -158,7 +158,7 @@ function makeCtx(handle) {
       if (name === 'slots') {
         return {
           inject(key, cb) {
-            if (key === 'conversation.composer.dock') { registered = cb; cb(); }
+            if (key === 'conversation.input.left') { registered = cb; cb(); }
           },
           register(desc, render) { registeredDesc = desc; registeredRender = render; },
         };
@@ -175,7 +175,7 @@ function makeCtx(handle) {
   let registeredDesc = null;
   let registeredRender = null;
   mod.apply(clientCtx);
-  ok('apply registered into composer.dock', registered !== null && registeredDesc !== null && registeredDesc.id === 'voice-input');
+  ok('apply registered into input.left', registered !== null && registeredDesc !== null && registeredDesc.id === 'voice-input' && registeredDesc.name === 'conversation.input.left');
   const props = { input: { draft: '' }, inputActions: { setDraft() {} } };
   const el = registeredRender(props);
   ok('render produces an element', el !== null && typeof el.type === 'function');

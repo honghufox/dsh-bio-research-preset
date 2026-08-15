@@ -99,10 +99,10 @@ window.__ModuleLoader__.load({
 					setPreparing(false);
 				};
 
-				var label = preparing ? "⏳ 准备中…" : (recording ? "⏺ 聆听中…" : "🎤 按住说话");
+				var label = preparing ? "⏳ 准备中…" : (recording ? "⏺ 聆听中…" : "🎤 语音");
 				return React.createElement(
 					"div",
-					{ style: { display: "flex", alignItems: "center", gap: "8px", padding: "4px 0" } },
+					{ style: { display: "inline-flex", alignItems: "center", gap: "6px" } },
 					React.createElement(
 						"button",
 						{
@@ -112,11 +112,12 @@ window.__ModuleLoader__.load({
 							onPointerCancel: function () { if (recording || preparing) stop(); },
 							title: "按住说话，松开结束（本地流式识别，中英混合）",
 							style: {
-								display: "inline-flex", alignItems: "center", gap: "6px",
-								border: "1px solid #888", borderRadius: "6px", padding: "3px 12px",
-								cursor: "pointer", fontSize: "12px", userSelect: "none",
+								display: "inline-flex", alignItems: "center", gap: "4px",
+								border: "1px solid #888", borderRadius: "6px", padding: "2px 8px",
+								cursor: "pointer", fontSize: "12px", lineHeight: "18px", userSelect: "none",
 								background: recording ? "#c62828" : (preparing ? "#e65100" : "transparent"),
 								color: recording || preparing ? "#fff" : "inherit",
+								whiteSpace: "nowrap",
 							},
 						},
 						React.createElement("span", null, label),
@@ -125,9 +126,14 @@ window.__ModuleLoader__.load({
 				);
 			}
 
-			slots.inject("conversation.composer.dock", function () {
+			// Registered in `conversation.input.left` (the composer tool row) instead
+			// of `conversation.composer.dock`: the dock seat is only rendered once the
+			// conversation leaves hero mode (i.e. AFTER the first message), so voice
+			// input was unavailable on a brand-new conversation. The tool row renders
+			// in both hero and active states.
+			slots.inject("conversation.input.left", function () {
 				return slots.register(
-					{ name: "conversation.composer.dock", id: "voice-input", order: 1 },
+					{ name: "conversation.input.left", id: "voice-input", order: 1 },
 					function (props) {
 						return React.createElement(VoiceButton, { input: props.input, inputActions: props.inputActions });
 					}
