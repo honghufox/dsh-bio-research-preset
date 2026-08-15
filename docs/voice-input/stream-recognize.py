@@ -37,6 +37,15 @@ def drain(recognizer, stream):
         recognizer.decode_streams([stream])
 
 
+def clean(text):
+    """Strip special tokens like <s>, </s>, <blank> and collapse whitespace."""
+    if not text:
+        return ""
+    import re
+    text = re.sub(r"<[^>]*>", "", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def main():
     stream_dir = sys.argv[1] if len(sys.argv) > 1 else STREAM_DIR
     offline_dir = sys.argv[2] if len(sys.argv) > 2 else OFFLINE_DIR
@@ -99,14 +108,14 @@ def main():
             tail = np.zeros(int(TAIL_SILENCE * 16000), dtype=np.float32)
             s.accept_waveform(16000, tail)
             drain(stream_recognizer, s)
-            txt = stream_recognizer.get_result(s).strip()
+            txt = clean(stream_recognizer.get_result(s))
             if txt:
                 committed.append(txt)
             stream_recognizer.reset(s)
         now = time.time()
         if now - last_print >= 0.25:
             last_print = now
-            partial = stream_recognizer.get_result(s).strip()
+            partial = clean(stream_recognizer.get_result(s))
             full = " ".join(committed + ([partial] if partial else []))
             sys.stdout.write("TEXT: " + full + "\n")
             sys.stdout.flush()
@@ -130,7 +139,7 @@ def main():
         o = offline.create_stream()
         o.accept_waveform(16000, audio)
         offline.decode_streams([o])
-        refined = o.result.text.strip()
+        refined = clean(o.result.text)
     except Exception as e:
         refined = ""
         sys.stderr.write("offline failed: %s\n" % e)
