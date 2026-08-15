@@ -122,7 +122,16 @@ def main():
         if release.is_set():
             break
 
-    # ---- offline refinement on the full recording (whisper-base: zh+en) ----
+    # ---- offline refinement on the full recording (whisper-small: zh+en) ----
+    # The streaming paraformer is bilingual; count CJK vs Latin chars in its
+    # accumulated text to pick the whisper language (single-language lock-in
+    # garbles the other language, e.g. auto-detect -> en -> Chinese mojibake).
+    stream_text = " ".join(committed)
+    n_cjk = sum(1 for ch in stream_text if "\u4e00" <= ch <= "\u9fff")
+    # Chinese-dominant user: any CJK -> zh (whisper keeps embedded English terms
+    # like gene names in zh mode); pure English -> en. (auto-detect locks to en
+    # on mixed speech and garbles the Chinese part.)
+    lang = "zh" if n_cjk > 0 else "en"
     try:
         offline = sherpa_onnx.OfflineRecognizer.from_whisper(
             encoder=offline_dir + r"\small-encoder.int8.onnx",
@@ -130,7 +139,7 @@ def main():
             tokens=offline_dir + r"\small-tokens.txt",
             num_threads=2,
             decoding_method="greedy_search",
-            language="",
+            language=lang,
             task="transcribe",
         )
         audio = np.concatenate(recording) if recording else np.zeros(0, dtype=np.float32)
