@@ -12,7 +12,7 @@ module.exports = {
   inject: ['subprocess', 'timer'],
   apply(ctx) {
     const MODEL = 'G:/dsh/_tools/asr/sherpa-onnx-streaming-paraformer-bilingual-zh-en';
-    const OFFLINE_MODEL = 'G:/dsh/_tools/asr/sherpa-onnx-whisper-base';
+    const OFFLINE_MODEL = 'G:/dsh/_tools/asr/sherpa-onnx-whisper-small';
     const PY = 'G:/dsh/_tools/asr/stream-recognize.py';
     const PORT = Number(process.env.DSH_VOICE_PORT || 8765);
     let state = null; // { handle, offset, mode, lastText }
