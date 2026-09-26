@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "bach-biotools-server": "^1.0.2"
+  }
+}

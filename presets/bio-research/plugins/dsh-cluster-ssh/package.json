@@ -1,0 +1,29 @@
+{
+  "name": "dsh-cluster-ssh",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LSF cluster execution channel for DeepSeek Harness over the system OpenSSH client: one authenticated interactive session, reused for fast subsequent commands, with sentinel-delimited output and ANSI/echo noise stripped.",
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "totp.cjs"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*",
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "dsh": {
+    "plugin": {
+      "note": "Host-plane tool plugin. Requires the system 'ssh' client on PATH and a saved connection in $DSH_HOME/dsh-ssh-connections.json; the TOTP secret lives in $DSH_HOME/dsh-ssh-totp.json and is never committed."
+    }
+  }
+}

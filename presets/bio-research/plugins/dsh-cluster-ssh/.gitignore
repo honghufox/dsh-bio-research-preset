@@ -1,0 +1,3 @@
+﻿# 运行时产物：askpass 由插件在首次连接时生成，其中 credentials.json 含
+# 明文密码与一次性动态口令，count 是调用计数。绝不允许提交。
+askpass/

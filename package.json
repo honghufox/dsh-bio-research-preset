@@ -1,0 +1,31 @@
+{
+  "name": "bio-research-preset",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-contained DSH agent presets: inline declarations plus the preset resources they ship.",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./package.json": "./package.json",
+    "./cordis.patch.yml": "./cordis.patch.yml"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "install": {
+      "note": "下面的目录随 bundle 分发但不含 node_modules，安装后请在其中执行依赖安装。",
+      "rebuild": [
+        {
+          "dir": "presets/bio-research/tools/biotools",
+          "command": "npm install --omit=dev"
+        },
+        {
+          "dir": "presets/bio-research/tools/zotero",
+          "command": "npm install --omit=dev"
+        }
+      ]
+    }
+  }
+}
