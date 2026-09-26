@@ -1,4 +1,4 @@
-﻿/**
+/**
  * dsh-cluster-ssh —— 基于**系统 OpenSSH** 的 LSF 集群执行通道。
  *
  * 为什么不用 ssh2：这台集群（OpenSSH 7.4）上实测 ssh2 能完成认证，但随后客户端发

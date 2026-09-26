@@ -100,7 +100,7 @@ DSH 的 mcp-client 在 `initialize` 里声明的是**空 capabilities**（`lib/i
 `{ capabilities: {} }`），所以中间那几档全都到不了；预设给 MCP server 的 `cwd`
 又正是插件目录（Tavotto 明确不拿它当边界）。结论：**必须显式给根**。
 
-预设里那一行钉的是**用户主目录** `C:\Users\<你的用户名>`（本预设的默认放图位置）：
+预设里那一行钉的是**用户主目录** `C:\Users\wangh`（本预设的默认放图位置）：
 
 ```yaml
 env:
@@ -114,7 +114,7 @@ env:
 `path_out_of_scope`」。
 
 要换、要加，就在**启动 dsh 之前**设这个环境变量（多个根用 `os.pathsep` 分隔，
-Windows 上是 `;`，例如 `C:\Users\<你的用户名>;G:\dsh`）。可信根之外的路径每个 open 都会回
+Windows 上是 `;`，例如 `C:\Users\wangh;G:\dsh`）。可信根之外的路径每个 open 都会回
 `path_out_of_scope`，一个根都没有则回 `no_workspace_root`——`project_path` 只是
 候选，不能自证权限。
 
@@ -143,15 +143,15 @@ DSH 这边按第 1 条的候选链自动挑一个存在的解释器。
 ## 实测：一条完整的交互回路（2026-09-20）
 
 `G:\dsh\_adapter\tavotto_roundtrip.py` 用**空 capabilities** 的 MCP client 直接从
-stdio 驱动 `mcp/server.py`（`TAVOTTO_MCP_ROOTS=C:\Users\<你的用户名>`、
-`TAVOTTO_MCP_EXECED=1`），在 `C:\Users\<你的用户名>\tavotto-probe\figures` 上把整条流程跑
+stdio 驱动 `mcp/server.py`（`TAVOTTO_MCP_ROOTS=C:\Users\wangh`、
+`TAVOTTO_MCP_EXECED=1`），在 `C:\Users\wangh\tavotto-probe\figures` 上把整条流程跑
 通了：
 
 | 步骤 | 结果 |
 | --- | --- |
 | `initialize` | `serverInfo` = tavotto 0.15.0 |
 | `tools/list` | 9 个工具 |
-| `tavotto_health` | `ok: true`、`mode: engine`、`roots: ["C:\Users\<你的用户名>"]`、`source: explicit_env` |
+| `tavotto_health` | `ok: true`、`mode: engine`、`roots: ["C:\Users\wangh"]`、`source: explicit_env` |
 | `tavotto_open_figure` | 会话 `s-…`、80.0×60.0 mm、**20 个可编辑元素**，manifest 带完整 `editable` 属性表（gid + prop + 枚举/范围） |
 | `tavotto_apply_overrides` | 一次发 6 条全量 patch（`legend.frameon=false`、`legend.fontsize=8.5`、`xticks/yticks.direction=in`、`xlabel/ylabel.weight=bold`），全部 applied |
 | `tavotto_preflight` | 改完 `error: 0`、`warn: 2`、`suggestion: 1`（改之前是 `warn: 5`，`tick-direction` / `legend-frame` / `legend-font-size` 三条被 override 消掉） |
@@ -167,7 +167,7 @@ stdio 驱动 `mcp/server.py`（`TAVOTTO_MCP_ROOTS=C:\Users\<你的用户名>`、
 
 留了两条不挡导出的 warning，也都是如实报告、不假装通过：机器上没装 Times New
 Roman（Tavotto 不拿相近字体冒充达标），以及图例压住数据（挪到图外属于结构性改动，
-归代码）。项目本身就是一份可复现的样例，留在 `C:\Users\<你的用户名>\tavotto-probe\`。
+归代码）。项目本身就是一份可复现的样例，留在 `C:\Users\wangh\tavotto-probe\`。
 
 ## 技能是怎么被 DSH 发现的
 

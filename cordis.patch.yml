@@ -235,7 +235,7 @@
               args:
                 - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('presets/bio-research/tools/ncbi/run-ncbi-mcp.py', baseUrl))"
               env:
-                NCBI_EMAIL: your_email@example.com
+                NCBI_EMAIL: hongkaiwang@webmail.hzau.edu.cn
                 NCBI_API_KEY: !!js "process.env.NCBI_API_KEY ?? ''"
               failOnStartupError: false
               toolCallTimeoutMs: 60000
@@ -292,9 +292,9 @@
           #   3. **工作区可信根只能走环境变量。** DSH 的 client 在 initialize 里声明空
           #      capabilities（既不声明 roots 也不声明 elicitation），Tavotto 的
           #      RootAuthority 因此跳过 host 那两档，落到 `TAVOTTO_MCP_ROOTS`。这里钉的是
-          #      用户主目录 `C:\Users\<你的用户名>`；要换、要加，就在启动 dsh 前设同名环境变量
+          #      用户主目录 `C:\Users\wangh`；要换、要加，就在启动 dsh 前设同名环境变量
           #      （多个根用 `os.pathsep` 分隔，Windows 上是 `;`，例如
-          #      `C:\Users\<你的用户名>;G:\dsh`）。不在可信根内的路径每个 open 都回
+          #      `C:\Users\wangh;G:\dsh`）。不在可信根内的路径每个 open 都回
           #      `path_out_of_scope`，一个根都没有则回 `no_workspace_root`——
           #      `project_path` 只是候选，不能自证权限。
           #

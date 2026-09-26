@@ -19,7 +19,7 @@ description: 画 matplotlib 论文级图表，并用 Tavotto 继续微调（拖�
 > * **本机是 Windows**：文中所有 `python3 …` 都用 `python …` 执行。
 > * **工作区授权只有一条路**：DSH 的 client 在 initialize 里声明空 capabilities
 >   （既无 `roots` 也无 `elicitation`），没有确认框可弹，只能靠启动 dsh 前设好的
->   `TAVOTTO_MCP_ROOTS`。预设里钉的是 **`C:\Users\<你的用户名>`**——图库放在这一层下面
+>   `TAVOTTO_MCP_ROOTS`。预设里钉的是 **`C:\Users\wangh`**——图库放在这一层下面
 >   都行，放在别处（例如 `G:\dsh`）会回 `path_out_of_scope`。见
 >   `references/first-run-and-recovery.md`。
 > * 「开工三问」用 DSH 的 `ask_user_question` 一次问齐。
