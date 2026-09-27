@@ -12,11 +12,17 @@
  *   - 之后所有命令复用同一会话，实测后续命令 ~200ms 量级；
  *   - 命令输出用哨兵切分，剥掉 ANSI 转义与登录横幅，不产生 PTY 回显/prompt 噪音，
  *     并按上限截断，避免把无关字节喂进模型上下文。
+ *
+ * 文件互传（`cluster_upload` / `cluster_download`）：
+ *   - scp 走 SFTP 子协议，无法在已有 shell 里执行，因此**单开一个 scp 进程**；
+ *   - 代价是每次传输单独认证一次（再消耗一个 TOTP 时间步）。所以多文件场景应先在
+ *     集群侧（或本地）打成 tar 包再传一个归档，而不是逐个文件传；
+ *   - 交互会话与传输互不干扰：传输不影响已经建立的 `cluster_exec` 会话。
  */
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const require = createRequire(import.meta.url)
@@ -108,6 +114,99 @@ function writeCredentials(spec) {
   }
   writeFileSync(CRED_FILE, JSON.stringify({ password: spec.password ?? '', otp }), { encoding: 'utf8', mode: 0o600 })
   rmSync(COUNT_FILE, { force: true })
+}
+
+/** 子进程用的环境：让 ssh/scp 从 askpass 取密码与动态口令。 */
+function askpassEnv() {
+  return { ...process.env, SSH_ASKPASS: ASKPASS_BAT, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: 'localhost:0' }
+}
+
+/** ssh/scp/sftp 共用的连接参数（含端口）。 */
+function connectionArgs(spec) {
+  return [
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'UserKnownHostsFile=NUL',
+    '-o', 'PreferredAuthentications=keyboard-interactive',
+    '-o', 'PubkeyAuthentication=no',
+    '-o', 'ConnectTimeout=25',
+    '-o', 'LogLevel=ERROR',
+  ]
+}
+
+/**
+ * 把本地路径补成绝对路径。
+ * 模型常给相对路径，而子进程的工作目录是 DSH 进程的目录，直接传给 scp 会指错地方。
+ * @param localPath - 用户给的本地路径。
+ * @returns 绝对路径。
+ */
+function toAbsoluteLocal(localPath) {
+  if (/^[A-Za-z]:[\\/]/.test(localPath) || localPath.startsWith('\\\\')) return localPath
+  return resolve(process.cwd(), localPath)
+}
+
+/**
+ * 展开远端路径（`~`、`~/x` 归一为主目录下的 POSIX 路径）。
+ * @param remotePath - 用户给的远端路径。
+ * @param home - 连接上配置的远端主目录，可为空。
+ * @returns 绝对 POSIX 路径。
+ */
+function toAbsoluteRemote(remotePath, home) {
+  if (remotePath === '~') return home.length > 0 ? home : '.'
+  if (remotePath.startsWith('~/')) return `${home}/${remotePath.slice(2)}`.replace(/\/{2,}/g, '/')
+  return remotePath
+}
+
+/**
+ * 用 scp 做一次单向传输。
+ *
+ * 为什么单开进程而不复用交互会话：scp 走 SFTP 子协议，不能在已有 shell 里跑。
+ * 代价是这次传输要**单独认证一次**（集群 TOTP 有 DISALLOW_REUSE，所以连续多次
+ * 传输会各自消耗一个时间步；批量传输请优先用 `cluster_exec` 在集群侧用 tar 打包）。
+ * @param spec - 连接配置。
+ * @param direction - `up` 上传，`down` 下载。
+ * @param localPath - 本地路径。
+ * @param remotePath - 远端路径。
+ * @returns 传输结果。
+ */
+function runTransfer(spec, direction, localPath, remotePath) {
+  return new Promise((resolvePromise, rejectPromise) => {
+    ensureAskpass()
+    writeCredentials(spec)
+    const home = typeof spec.cwd === 'string' ? spec.cwd : ''
+    const local = direction === 'up' ? toAbsoluteLocal(localPath) : toAbsoluteLocal(localPath)
+    const remote = toAbsoluteRemote(remotePath, home)
+    const target = `${spec.username}@${spec.host}`
+    const args = [
+      ...connectionArgs(spec),
+      '-P', String(spec.port),
+      direction === 'up' ? local : `${target}:${remote}`,
+      direction === 'up' ? `${target}:${remote}` : local,
+    ]
+    const started = Date.now()
+    const child = spawn(process.env.DSH_SCP_CLIENT ?? 'scp', args, {
+      env: askpassEnv(),
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+    })
+    let stdout = ''
+    let stderr = ''
+    const timer = setTimeout(() => { try { child.kill() } catch (error) { /* 已退出 */ } }, 30 * 60 * 1000)
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8') })
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8') })
+    child.on('error', (error) => { clearTimeout(timer); rejectPromise(error) })
+    child.on('close', (code) => {
+      clearTimeout(timer)
+      resolvePromise({
+        direction,
+        localPath: local,
+        remotePath: remote,
+        ok: code === 0,
+        exitCode: code === null ? -1 : code,
+        elapsedMs: Date.now() - started,
+        detail: (stderr.trim() || stdout.trim()).slice(0, 2000),
+      })
+    })
+  })
 }
 
 /**
@@ -426,6 +525,76 @@ export function apply(ctx) {
         totpFile,
         sshClient: process.env.DSH_SSH_CLIENT ?? 'ssh',
       }
+    },
+  }))
+
+  ctx.tools.register(toToolDefinition({
+    name: 'cluster_upload',
+    description: 'Copy a local file to the LSF cluster over SCP. This opens its own authenticated connection, so it spends one TOTP code — for many files, tar them first (locally or with cluster_exec) and transfer the archive instead.',
+    parameters: {
+      localPath: { type: 'string', required: true, description: 'Local file path (relative paths resolve against the harness working directory).' },
+      remotePath: { type: 'string', required: true, description: 'Destination path on the cluster; `~` and `~/x` are expanded against the login home.' },
+      connectionId: { type: 'string', description: 'Saved connection id; defaults to the first saved connection.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          direction: { type: 'string', required: true },
+          localPath: { type: 'string', required: true },
+          remotePath: { type: 'string', required: true },
+          exitCode: { type: 'number', required: true },
+          elapsedMs: { type: 'number', required: true },
+          detail: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.ok
+          ? `已上传（${value.elapsedMs} ms）：${value.localPath} -> ${value.remotePath}`
+          : `上传失败（exit ${value.exitCode}）：${value.localPath} -> ${value.remotePath}\n${value.detail}`,
+      }],
+    },
+    async execute(args) {
+      const { spec } = sessionFor(args.connectionId)
+      return runTransfer(spec, 'up', args.localPath, args.remotePath)
+    },
+  }))
+
+  ctx.tools.register(toToolDefinition({
+    name: 'cluster_download',
+    description: 'Copy a file from the LSF cluster to the local machine over SCP. This opens its own authenticated connection, so it spends one TOTP code — prefer tarring many files on the cluster first and downloading one archive.',
+    parameters: {
+      remotePath: { type: 'string', required: true, description: 'File path on the cluster; `~` and `~/x` are expanded against the login home.' },
+      localPath: { type: 'string', required: true, description: 'Local destination path (relative paths resolve against the harness working directory).' },
+      connectionId: { type: 'string', description: 'Saved connection id; defaults to the first saved connection.' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          ok: { type: 'boolean', required: true },
+          direction: { type: 'string', required: true },
+          localPath: { type: 'string', required: true },
+          remotePath: { type: 'string', required: true },
+          exitCode: { type: 'number', required: true },
+          elapsedMs: { type: 'number', required: true },
+          detail: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => [{
+        type: 'text',
+        text: value.ok
+          ? `已下载（${value.elapsedMs} ms）：${value.remotePath} -> ${value.localPath}`
+          : `下载失败（exit ${value.exitCode}）：${value.remotePath} -> ${value.localPath}\n${value.detail}`,
+      }],
+    },
+    async execute(args) {
+      const { spec } = sessionFor(args.connectionId)
+      return runTransfer(spec, 'down', args.localPath, args.remotePath)
     },
   }))
 
