@@ -6,9 +6,11 @@ whenToUse: 处理实验数据、选择统计检验、报告 p 值/效应量、�
 
 # 生物统计与数据分析
 
-## 环境
-- Python 已装齐：pandas 3.0 / numpy 2.4 / scipy 1.18 / statsmodels 0.14 / seaborn 0.13 / scikit-learn 1.9
-- R 4.5 可用（脚本中用 Rscript 显式调用）
+## 环境（2026-09-29 实测）
+- Python 已装齐：pandas 2.3.3 / numpy 2.2.6 / scipy 1.15.3 / statsmodels 0.14.6 / seaborn 0.13.2 / scikit-learn 1.7.2
+- R 4.6.0 已装但**未加入 PATH**（全路径 `C:\Program Files\R\R-4.6.0\bin\Rscript.exe`）；
+  用户库里已装 `ggplot2` 4.0.3 / `data.table` 1.18.6.1 / `rms` 8.1.1 / `survminer` 0.5.2 /
+  `vcfR` 1.16.0 等，`Rscript` 直接可用（R 自动包含 `%LOCALAPPDATA%\R\win-library\4.6`）。
 - 脚本写入工作区、可重复运行；数据不要硬编码进脚本，从文件读取
 
 ## 选择统计检验（决策速查）

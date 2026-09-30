@@ -100,12 +100,22 @@ DSH 的 mcp-client 在 `initialize` 里声明的是**空 capabilities**（`lib/i
 `{ capabilities: {} }`），所以中间那几档全都到不了；预设给 MCP server 的 `cwd`
 又正是插件目录（Tavotto 明确不拿它当边界）。结论：**必须显式给根**。
 
-预设里那一行钉的是**用户主目录** `C:\Users\wangh`（本预设的默认放图位置）：
+预设里那一行**不再钉死某个用户名**：显式设了 `TAVOTTO_MCP_ROOTS` 就用它，否则由本机
+推导——`USERPROFILE` / `HOME` / `os.homedir()` 去重，逐个确认存在后用 `os.pathsep`
+连接（需要额外出图根时，把 `TAVOTTO_MCP_ROOTS` 设成 `C:\Users\<用户名>;D:\figures`
+这样的值）：
 
 ```yaml
 env:
-  TAVOTTO_MCP_ROOTS: !!js "process.env.TAVOTTO_MCP_ROOTS ?? process.getBuiltinModule('node:path').join('C:', 'Users', 'wangh')"
+  TAVOTTO_MCP_ROOTS: !!js "(() => { /* 显式值 → 主目录 → 出图根，去重且确认存在 */ })()"
 ```
+
+上游那一行钉的是作者自己的主目录 `C:\Users\wangh`。换一台机器就没有这个用户，后果不是
+「少一个根」而是**每个 open 都回 `path_out_of_scope`**：图能画出来，却交不进 Tavotto
+桌面版——而桌面版**只能打开图库（含 `tavotto_registry.json` 的目录）里的图**，图库又
+必须在可信根之内。预设的 persona 里因此补了一条「Tavotto 图库与桌面交接」，把
+「图与脚本同目录 → 确认在根内 → 跑 handoff.py 读那行 JSON → 越界就设环境变量重启」
+这条链写清楚，免得模型改用 shell 绕过授权。
 
 写成 `path.join` 而不是字面量，是为了绕开 YAML 双引号里的反斜杠转义：`!!js` 标量
 先过 YAML 解码再 `eval`（`cordis-plugin-loader` 的

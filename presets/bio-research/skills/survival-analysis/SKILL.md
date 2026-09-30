@@ -6,9 +6,13 @@ whenToUse: 做生存分析、KM 曲线、Cox 回归、预后模型、表达-生�
 
 # 生存分析（Survival Analysis）
 
-## 环境
-- Python：lifelines 已装（from lifelines import KaplanMeierFitter, CoxPHFitter, logrank_test）
-- R：survival / survminer / survivalROC / timeROC / rms / cmprsk / forestplot 已装
+## 环境（2026-09-29 实测）
+- Python：lifelines 0.30.0 已装（from lifelines import KaplanMeierFitter, CoxPHFitter, logrank_test）
+- R：`survival` / `survminer` 0.5.2 / `rms` 8.1.1 / `timeROC` 0.4.1 / `cmprsk` 2.2.12 /
+  `forestplot` 3.2.0 **已装**（用户库 `%LOCALAPPDATA%\R\win-library\4.6`，R 会自动加载）。
+  R 4.6.0 **未加入 PATH**，需全路径 `C:\Program Files\R\R-4.6.0\bin\Rscript.exe`。
+  唯一没装的是 `survivalROC`——时间依赖 ROC 用 `timeROC` 代替即可。
+  Python lifelines 与 R 两条路都可用，按需选。
 - 数据格式：通常为三列——`time`（随访时间）、`event`（1=发生终点事件，0=删失）、协变量列；生存分析前先确认删失编码正确
 
 ## 核心方法速查

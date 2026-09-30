@@ -15,7 +15,7 @@
       "patch": "./cordis.patch.yml"
     },
     "install": {
-      "note": "下面的目录随 bundle 分发但不含 node_modules，安装后请在其中执行依赖安装。",
+      "note": "dsh.install 是 0.1.x 的机制：DSH 0.2 只读 dsh.bundle.patch 与 dsh.profile.bundles，不再读取本字段，所以这里不会自动重建任何东西。真正生效的安装步骤是 setup.ps1（重建 node_modules 并校验构建产物，另装 ncbi-mcp 与 Tavotto 引擎）；下面的 rebuild 列表保留下来，只为 0.1.x 与文档对照。",
       "rebuild": [
         {
           "dir": "presets/bio-research/tools/biotools",

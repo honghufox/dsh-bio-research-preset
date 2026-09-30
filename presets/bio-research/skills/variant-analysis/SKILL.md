@@ -6,10 +6,12 @@ whenToUse: 处理 VCF 文件（变异调用结果）、变异过滤、注释、�
 
 # VCF 变异数据分析与可视化
 
-## 环境
-- Python：vcfpy 0.14 已装（from vcfpy import Reader, Writer, Header）
-- R：vcfR 已装（read.vcfR / chromoR / vcfR 可视化族）
-- 注释查询：R biomaRt（Ensembl，需网络；DSH 沙箱内联网受限时用 web 工具或让用户终端执行）
+## 环境（2026-09-29 实测）
+- Python：vcfpy 0.14.2 已装（from vcfpy import Reader, Writer, Header）——**默认走这条路**
+- R：**`vcfR` 1.16.0 已装**（用户库 `%LOCALAPPDATA%\R\win-library\4.6`，R 自动加载）。
+  R 4.6.0 **未加入 PATH**，需全路径 `C:\Program Files\R\R-4.6.0\bin\Rscript.exe`。
+  **`biomaRt` 2.68.0 也已装**（Bioconductor 3.23，连同 BiocFileCache / AnnotationDbi 等依赖）——
+  Ensembl 注释可直接走 R；注意它需要联网，沙箱受限时改用 biotools MCP 或 web 工具。
 - 说明：本机不处理 BAM/FASTQ 原始数据（samtools/pysam 未装）；VCF 是"处理完成"的变异结果文件，以下流程都从 VCF 开始
 
 ## VCF 字段速记

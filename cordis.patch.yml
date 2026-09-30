@@ -1,7 +1,10 @@
 # 由 make-desktop-bundle.mjs 生成（来源：G:\dsh\_staging\preset-root）。
-# 自包含：预设自带资源在 presets/<id>/ 下，行内 baseUrl 引用已重定位到 bundle 内，
-# 因此整个 bundle 可放在任意路径、任意机器上，无需安装期改写绝对路径。
-# 依赖产物（node_modules）不随仓库分发，安装后按 dsh.install 重建。
+# 自包含：预设自带资源在 presets/bio-research/ 下。行内路径**必须**用
+# `createRequire(baseUrl).resolve('bio-research-preset/package.json')` 定位 bundle 根：
+# 预设子行拿到的 baseUrl 是注册表自己的上下文（profile 目录），**不是**本文件所在目录，
+# 所以 `new URL('presets/…', baseUrl)` 会指向不存在的路径——MCP 服务器起不来、
+# 自带技能一个也扫不到。这样写整个 bundle 仍可放在任意路径、任意机器上。
+# 依赖产物（node_modules）不随仓库分发，安装后按 setup.ps1 重建。
 - insert:
     - id: preset-bio-research
       name: '@deepseek-ai/dsh-agent-preset'
@@ -46,7 +49,7 @@
                 服务对象是基础生物学科研工作者（分子生物学 / 细胞生物学 / 生物化学方向），研究重点为**基因组学分析（变异/VCF 数据）与生存分析**。在科研全流程中提供帮助：
 
                 【集群执行——本预设最重要的行为改变】本预设已接入华中农业大学作物遗传改良全国重点实验室高性能计算平台（HPC，LSF 调度）。**集群与本机是两套执行面，必须分清**：
-                - **集群命令一律走 `cluster_exec` 工具**（基于系统 OpenSSH 的持久会话，一次认证后复用，实测后续命令 60–170ms）。它执行在**登录节点 login02** 上，默认目录 /public/home/hkwang，环境是 Linux/bash。
+                - **集群命令一律走 `cluster_exec` 工具**（基于系统 OpenSSH 的持久会话，一次认证后复用，实测后续命令 60–170ms）。它执行在**登录节点 login02** 上，默认目录 `/public/home/<用户名>`，环境是 Linux/bash。
                 - `cluster_exec` 每次调用是一条独立的 bash 命令；需要多步时在一条命令里用 `&&`/`;` 串联，或写成脚本（配合文件工具，见下）后再执行。管道、重定向都是 bash 语义，不要写 PowerShell 语法。
                 - **本机命令仍用 pwsh 工具**（Windows）。不要用 pwsh 去跑集群命令，也不要用 cluster_exec 去碰本机文件。
                 - 文件工具（读取/写入/编辑/搜索）作用于**本机 Windows 文件系统**；集群上的文件请在 `cluster_exec` 里用 ls/cat/head/awk 等命令读写，大文件不要整体读进上下文——先看大小（`ls -lh`、`wc -l`），必要时只取摘要或统计量。
@@ -68,7 +71,9 @@
 
                 【图像绘制】产出发表级图表：matplotlib / seaborn 或 R ggplot2，输出 PNG(300dpi)/SVG/PDF 到 figures/ 目录，注意期刊尺寸与色盲友好配色。本预设内置 Tavotto（tavotto-figure 技能 + 9 个 mcp__tavotto__* 工具）用于交付前的版式微调：画完先调 mcp__tavotto__tavotto_health，再用 tavotto_open_figure 打开、tavotto_apply_overrides 改图例/字号/线宽/刻度（patches 是**全量列表**，不要发增量）、tavotto_preflight 按出版规范体检、tavotto_export 导出真矢量 PDF；已有图只要改宽度/字体/最小字号时走 tavotto_normalize_figure 保留式规范化，**不要重画**。DSH 不出内嵌画布，所有微调都走工具；工具不可用时按 tavotto-figure 技能的恢复路径排查，不要重装预设。
 
-                【论文撰写】按 IMRaD 结构组织；提供学术英语润色、摘要撰写、参考文献格式化（给出 PMID/DOI 即可）。本机已装 TinyTeX（LaTeX 编译，见 latex-compile 技能）与 pandoc / python-docx（Markdown 转 Word/PDF，见 document-output 技能），支持完整的论文产出流程。
+                【Tavotto 图库与桌面交接】Tavotto 桌面版**只能打开图库里的图**——图库是含 `tavotto_registry.json` 的目录，而且必须落在授权根（`TAVOTTO_MCP_ROOTS`）之内；根之外的图，`tavotto_open_figure` 回 `path_out_of_scope`，桌面窗口同样打不开、改不了。**「画得出来」不等于「交得出去」**，出图时按这四步走：① 图与脚本放同一目录（figure-contract 契约 1），默认 `<工作目录>/figures/`；那个目录里已经有 `tavotto_registry.json` 就沿用它，**不要另起炉灶**。② 确认该目录在授权根下——先调一次 `mcp__tavotto__tavotto_health`，看 `root_authority.roots`：`roots` 非空才算授权落地；本机默认根是用户主目录（可用环境变量 `TAVOTTO_MCP_ROOTS` 追加更多）。③ 要在桌面窗口里做多图拼版 / 画布标注 / (a)(b) 编号 / 版本历史 / 写回原始 PDF·PNG 时，跑 tavotto-figure 技能自带的 `python scripts/handoff.py <脚本路径>` 交接（它把产物登记进图库注册表再唤起桌面版），**必须读它输出的那行 JSON**：`parameterizable: true` 才算交接成功，`false` 或非零退出码就是没做完，按 `error_code` 处理，不要当噪音略过。④ 图库确实落在授权根之外时，**不要改用 shell 绕过授权**，也不要重装预设——把情况告诉用户，让他在**启动 dsh 之前**设 `TAVOTTO_MCP_ROOTS`（多个根用 `;` 分隔，例如 `C:\Users\<用户名>;D:\figures`）再重启 dsh；MCP 连接不热更新环境变量。
+
+                【论文撰写】按 IMRaD 结构组织；提供学术英语润色、摘要撰写、参考文献格式化（给出 PMID/DOI 即可）。**文档链路已实测可用**：pandoc 3.11（已在 PATH 上）做 Markdown → Word/PDF；TinyTeX（TeX Live 2026，`F:\dsh\_tools\TinyTeX\bin\windows`，也在 PATH 上）做 LaTeX 编译，中文宏包 ctex / xeCJK 已装——pandoc 出中文 PDF 要加 `-V CJKmainfont="Microsoft YaHei"`；python-docx / python-pptx 亦在。**本机没有 G: 盘**，不要引用 `G:\dsh\_tools\...` 之类的路径。R 4.6.0 **未加入 PATH**（全路径 `C:\Program Files\R\R-4.6.0\bin\Rscript.exe`），CRAN 侧已装 ggplot2 / data.table / rms / survminer / vcfR，Bioconductor 3.23 侧已装 Biostrings / biomaRt（用户库自动加载）；Python 侧 pandas 2.3 / numpy 2.2 / scipy 1.15 / statsmodels 0.14 / seaborn 0.13 / matplotlib 3.10 / lifelines 0.30 / scikit-learn 1.7 齐备。
 
                 【生信分析】序列获取 / 比对 / BLAST / 系统发育可用 biotools MCP 的 37 个工具；预设中还预装了 ncbi-mcp 与 mcp-zotero（按 agent.cordis.yml 中注释启用）。集群侧的重计算流程走 ncpgr-bio-router / ncpgr-software 技能。
 
@@ -114,29 +119,21 @@
           # CHANNEL_OPEN_FAILURE）。已逐项排除加密套件（aes128-ctr 同样失败）、客户端 ident、
           # 登录限速等因素；同一账号用系统 OpenSSH 9.5 完全正常。因此集群通道改用系统 ssh。
           #
-          # 为什么不用 `isolate` 隔离 subprocess：那会连带把宿主 shell 工具的 `ctx.subprocess`
-          # 换成远程实现，且 dsh-cluster-ssh 并不注册 subprocess（它只提供工具），隔离没有收益。
+          # 为什么 dsh-cluster-ssh 不进隔离组：它只往 `tools` 注册表注册工具、不 provide 任何服务，
+          # 隔离对它没有收益（它也不注册 subprocess），所以这里是普通的一行，与 eln 预设一致。
           #
-          # 为什么 pwsh 仍放在隔离组里：`tool-pwsh` 与宿主基座同名，根作用域重复注册会冲突。
-          # 组内挂 `pwsh-local` + `tool-pwsh`，pwsh 工具继续执行**本机**命令；集群命令走
-          # `cluster_exec`。两者职责清晰，互不影响。
-          - id: cluster-ssh
-            name: cordis:group
-            group: true
-            isolate:
-              shell: true
-            config:
-              # 集群执行通道：基于系统 OpenSSH，一次认证后复用同一交互式会话
-              # （实测：认证 ~1s，后续命令 ~60-170ms；无 PTY 回显噪音，输出按字节上限截断）
-              - id: cluster-ssh-tools
-                name: 'dsh-cluster-ssh'
-
-              # 本机 shell：隔离组内提供，避免与宿主 tool-pwsh 同名冲突
-              - id: pwsh-cluster
-                name: '@deepseek-ai/dsh-pwsh-local'
-
-              - id: tool-pwsh
-                name: '@deepseek-ai/dsh-tool-pwsh'
+          # 本机 shell 用**宿主**的 `tool-pwsh`（见上方那一行），与 eln / p2a / 自带 standard 预设
+          # 一致：它经 `pwsh-sandbox` 执行，仍受沙箱与审批策略约束。
+          #
+          # ⚠ 不要再在这里加一行 `tool-pwsh`。预设的每一行——**分组内的行也算**——都注册进同一个
+          # 作用域层（加载器不会为 cordis:group 建新作用域，`isolate` 只隔离服务、不隔离工具层），
+          # 同名工具第二次注册会抛 `tool "pwsh" is already registered in this scope`；预设注册表
+          # 把这种失败记为 broken 并**放弃整个预设的挂载**。本文件原先就是「顶层一行 tool-pwsh +
+          # 组内一行 tool-pwsh」的形态，在 Windows 上两行都启用，因此整个预设挂不上。
+          # 集群执行通道：基于系统 OpenSSH，一次认证后复用同一交互式会话
+          # （实测：认证 ~1s，后续命令 ~60-170ms；无 PTY 回显噪音，输出按字节上限截断）
+          - id: cluster-ssh-tools
+            name: 'dsh-cluster-ssh'
 
 
           - id: tool-fs
@@ -182,20 +179,21 @@
           # The skill REGISTRY lives in the host composition and is layered per scope:
           # these rows register into THIS preset's layer of it, so they need no realm.
           # `skill-filesystem` contributes local-root discovery for agents on this preset
-          # and the research skills shipped inside the preset directory (via
-          # `customSkillDirs`, resolved from `baseUrl` like the shipped `cordis` preset
-          # does), and `tool-skill` gives them the catalog and loader; the merged catalog
+          # and the research skills shipped inside the bundle (via `customSkillDirs`,
+          # resolved the way the shipped `cordis` preset resolves its own: `baseUrl` is a
+          # MODULE-RESOLUTION anchor, never this composition's directory — see the header
+          # note), and `tool-skill` gives them the catalog and loader; the merged catalog
           # also carries whatever the deployment registered globally (repository plugins).
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
             config:
               customSkillDirs:
-                - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('presets/bio-research/skills/', baseUrl))"
+                - !!js "(() => { const p = process.getBuiltinModule('node:path'); const r = p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('bio-research-preset/package.json')); return p.join(r, 'presets', 'bio-research', 'skills'); })()"
                 # Tavotto 的 vendor 副本自带 `skills/tavotto-figure/`（SKILL.md + references +
                 # scripts，`mcp/server.py` 按 `../skills/…` 找它的 handoff.py）。直接把那一层
                 # 当第二个 skill root 扫，胜过把技能目录复制一份出来——复制品会和
                 # `tools/tavotto/skills/` 悄悄漂开。
-                - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('presets/bio-research/tools/tavotto/skills/', baseUrl))"
+                - !!js "(() => { const p = process.getBuiltinModule('node:path'); const r = p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('bio-research-preset/package.json')); return p.join(r, 'presets', 'bio-research', 'tools', 'tavotto', 'skills'); })()"
 
           - id: tool-skill
             name: '@deepseek-ai/dsh-tool-skill'
@@ -215,7 +213,7 @@
               transport: stdio
               command: node
               args:
-                - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('presets/bio-research/tools/biotools/node_modules/bach-biotools-server/build/index.js', baseUrl))"
+                - !!js "(() => { const p = process.getBuiltinModule('node:path'); const r = p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('bio-research-preset/package.json')); return p.join(r, 'presets', 'bio-research', 'tools', 'biotools', 'node_modules', 'bach-biotools-server', 'build', 'index.js'); })()"
               failOnStartupError: false
               toolCallTimeoutMs: 120000
 
@@ -233,10 +231,18 @@
               transport: stdio
               command: python
               args:
-                - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('presets/bio-research/tools/ncbi/run-ncbi-mcp.py', baseUrl))"
+                - !!js "(() => { const p = process.getBuiltinModule('node:path'); const r = p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('bio-research-preset/package.json')); return p.join(r, 'presets', 'bio-research', 'tools', 'ncbi', 'run-ncbi-mcp.py'); })()"
               env:
-                NCBI_EMAIL: hongkaiwang@webmail.hzau.edu.cn
+                # NCBI 要求 E-utilities 请求携带真实邮箱：在启动 dsh 前设环境变量 NCBI_EMAIL，
+                # 或把下方占位符换成你自己的邮箱。
+                NCBI_EMAIL: !!js "process.env.NCBI_EMAIL ?? 'your.email@example.com'"
                 NCBI_API_KEY: !!js "process.env.NCBI_API_KEY ?? ''"
+                # 本机 Windows 注册表设了系统代理（ProxyServer=127.0.0.1:7897），而 Python 的
+                # requests 经 urllib.getproxies() 读注册表，会把 https 拼成
+                # `https://127.0.0.1:7897`——在一个纯 HTTP 代理端口上走 TLS，必然 ProxyError。
+                # NCBI 直连可达（实测 HTTP 200），因此对这个服务器整体绕过代理。
+                NO_PROXY: '*'
+                no_proxy: '*'
               failOnStartupError: false
               toolCallTimeoutMs: 60000
 
@@ -255,7 +261,7 @@
               transport: stdio
               command: node
               args:
-                - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('presets/bio-research/tools/zotero/node_modules/mcp-zotero/build/server.js', baseUrl))"
+                - !!js "(() => { const p = process.getBuiltinModule('node:path'); const r = p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('bio-research-preset/package.json')); return p.join(r, 'presets', 'bio-research', 'tools', 'zotero', 'node_modules', 'mcp-zotero', 'build', 'server.js'); })()"
               env:
                 ZOTERO_API_KEY: ''
                 ZOTERO_USER_ID: ''
@@ -291,12 +297,20 @@
           #
           #   3. **工作区可信根只能走环境变量。** DSH 的 client 在 initialize 里声明空
           #      capabilities（既不声明 roots 也不声明 elicitation），Tavotto 的
-          #      RootAuthority 因此跳过 host 那两档，落到 `TAVOTTO_MCP_ROOTS`。这里钉的是
-          #      用户主目录 `C:\Users\wangh`；要换、要加，就在启动 dsh 前设同名环境变量
-          #      （多个根用 `os.pathsep` 分隔，Windows 上是 `;`，例如
-          #      `C:\Users\wangh;G:\dsh`）。不在可信根内的路径每个 open 都回
-          #      `path_out_of_scope`，一个根都没有则回 `no_workspace_root`——
-          #      `project_path` 只是候选，不能自证权限。
+          #      RootAuthority 因此跳过 host 那两档，落到 `TAVOTTO_MCP_ROOTS`。
+          #
+          #      **Tavotto 桌面版只能打开图库里的图**：图库 = 含
+          #      `tavotto_registry.json` 的目录，且必须落在可信根之内；根之外的路径每个
+          #      open 都回 `path_out_of_scope`，桌面窗口同样打不开、改不了。所以默认根
+          #      必须覆盖真正出图的地方，否则「画得出来、交不出去」。
+          #
+          #      默认值由**本机**推导，不再钉上游作者的主目录 `C:\Users\wangh`
+          #      （本机没有这个用户，钉着它等于每个 open 都越界）：
+          #      `USERPROFILE` / `HOME` / `os.homedir()` 去重后用 `os.pathsep`
+          #      （Windows 是 `;`）连接，并逐个确认存在。要换、要加，就在启动 dsh 前
+          #      设同名环境变量（例如 `C:\Users\<用户名>;D:\figures`）；一个根都没有则
+          #      回 `no_workspace_root` —— `project_path` 只是候选，不能自证权限。
+          #      改完必须重启 dsh。
           #
           #   4. **`command` 不写上游清单里的 `python3`。** Windows 上 `python3` 常是微软
           #      商店的 App Execution Alias（命令在、退出码 9009、零输出），上游为此专门有
@@ -319,10 +333,12 @@
               transport: stdio
               command: !!js "(() => { const fs = process.getBuiltinModule('node:fs'); const path = process.getBuiltinModule('node:path'); const candidates = [process.env.TAVOTTO_MCP_PYTHON, process.env.TAVOTTO_WORKER_PYTHON, process.env.APPDATA ? path.join(process.env.APPDATA, 'Tavotto', 'mcp-runtime', 'venv', 'Scripts', 'python.exe') : undefined]; for (const candidate of candidates) { if (typeof candidate === 'string' && candidate !== '' && fs.existsSync(candidate)) return candidate } return 'python' })()"
               args:
-                - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('presets/bio-research/tools/tavotto/mcp/server.py', baseUrl))"
-              cwd: !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('presets/bio-research/tools/tavotto', baseUrl))"
+                - !!js "(() => { const p = process.getBuiltinModule('node:path'); const r = p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('bio-research-preset/package.json')); return p.join(r, 'presets', 'bio-research', 'tools', 'tavotto', 'mcp', 'server.py'); })()"
+              cwd: !!js "(() => { const p = process.getBuiltinModule('node:path'); const r = p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('bio-research-preset/package.json')); return p.join(r, 'presets', 'bio-research', 'tools', 'tavotto'); })()"
               env:
-                TAVOTTO_MCP_ROOTS: !!js "process.env.TAVOTTO_MCP_ROOTS ?? process.getBuiltinModule('node:path').join('C:', 'Users', 'wangh')"
+                # 图库必须落在这里列出的根之内，桌面版才打得开。默认根由本机推导
+                # （主目录 + 本机出图根），显式设了 TAVOTTO_MCP_ROOTS 就用它。
+                TAVOTTO_MCP_ROOTS: !!js "(() => { const env = process.env; if (typeof env.TAVOTTO_MCP_ROOTS === 'string' && env.TAVOTTO_MCP_ROOTS.trim() !== '') return env.TAVOTTO_MCP_ROOTS; const fs = process.getBuiltinModule('node:fs'); const os = process.getBuiltinModule('node:os'); const path = process.getBuiltinModule('node:path'); const candidates = [env.USERPROFILE, env.HOME, os.homedir()]; const roots = []; for (const candidate of candidates) { if (typeof candidate !== 'string' || candidate.trim() === '' || roots.includes(candidate)) continue; if (fs.existsSync(candidate)) roots.push(candidate) } return roots.join(path.delimiter) })()"
                 # 关掉启动器的 os.execv 交棒（见上方第 1 条）：DSH 的 stdio 管道经不起换映像。
                 TAVOTTO_MCP_EXECED: '1'
               failOnStartupError: false
@@ -430,6 +446,7 @@
                 config:
                   provider: spawn
                   toolName: subagent
+                  modelSelectionSettings: true
                   backgroundMode: continuable
 
               - id: tool-subagent-fork
@@ -491,3 +508,7 @@
             config:
               fetch: false
               searchTimeoutMs: 60000
+
+          # The model-facing deliverable card, as the shipped `standard` preset has it.
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'

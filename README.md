@@ -28,19 +28,34 @@ powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\.dsh\profiles\desktop
 
 仓库**刻意不提交** `node_modules`：它们是平台专属、重装即可得的产物，提交进 Git 会让仓库膨胀且不可移植。
 
-需要在以下目录执行 `npm install`（`setup.ps1` 已自动处理）：
+需要在以下目录执行 `npm install`（`setup.ps1` 已自动处理，并会校验真正的构建产物）：
 
-- `presets/bio-research/tools/biotools` — `npm install --omit=dev`
-- `presets/bio-research/tools/zotero` — `npm install --omit=dev`
+- `presets/bio-research/tools/biotools` — `npm install --omit=dev`，产物 `node_modules/bach-biotools-server/build/index.js`
+- `presets/bio-research/tools/zotero` — `npm install --omit=dev`，产物 `node_modules/mcp-zotero/build/server.js`
+
+另外两个 MCP 服务器依赖 **Python 侧**环境，同样由 `setup.ps1` 处理（`-SkipPythonTools` 可跳过）：
+
+- `presets/bio-research/tools/ncbi` — `python -m pip install --user ncbi-mcp "mcp>=1.0,<2"`
+  （mcp SDK 2.x 移除了 FastMCP API，必须锁 1.x）
+- `presets/bio-research/tools/tavotto` — `python mcp/server.py --provision`
+  （在 `%APPDATA%\Tavotto\mcp-runtime\venv` 下建插件自管环境；预设行的 `command` 会优先挑它）
+
+> **DSH 0.2 起 `package.json` 里的 `dsh.install` 不再被读取**（0.2 只读 `dsh.bundle.patch`
+> 与 `dsh.profile.bundles`）。所以上面这些步骤**只能**由 `setup.ps1` 承担 —— 漏装时预设
+> 仍会挂载成功（`failOnStartupError: false`），只是对应的 `mcp__*` 工具会缺失。
 
 ## 手工安装（不使用 setup.ps1）
 
 ```powershell
 $bundle = "$env:USERPROFILE\.dsh\profiles\desktop\local-bundles\bio-research-preset"
 
-# 重建依赖
+# 重建 node 侧依赖
 Push-Location "$bundle\presets\bio-research\tools\biotools"; npm install --omit=dev; Pop-Location
 Push-Location "$bundle\presets\bio-research\tools\zotero"; npm install --omit=dev; Pop-Location
+
+# 重建 python 侧依赖
+python -m pip install --user ncbi-mcp "mcp>=1.0,<2"
+python "$bundle\presets\bio-research\tools\tavotto\mcp\server.py" --provision
 
 # 编辑 $env:USERPROFILE\.dsh\profiles\desktop\package.json：
 #   dependencies 里加  "bio-research-preset": "link:./local-bundles/bio-research-preset"
@@ -52,9 +67,9 @@ Push-Location "$bundle\presets\bio-research\tools\zotero"; npm install --omit=de
 ```
 bio-research-preset/
 ├── cordis.patch.yml     # 预设声明（一行 @deepseek-ai/dsh-agent-preset，内联 composition）
-├── package.json         # dsh.bundle.patch 指向上面的 patch；dsh.install 列出待重建依赖
+├── package.json         # dsh.bundle.patch 指向上面的 patch（dsh.install 是 0.1.x 遗留字段，0.2 不读）
 ├── lib/index.js         # bundle 入口（空模块，仅满足包约定）
-├── setup.ps1            # 依赖重建 + profile 清单写入
+├── setup.ps1            # node + python 依赖重建、profile 清单写入
 └── presets/bio-research/       # 预设自带资源：skills/、tools/ 等
 ```
 

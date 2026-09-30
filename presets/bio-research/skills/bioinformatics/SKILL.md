@@ -6,9 +6,12 @@ whenToUse: 做序列分析、比对、BLAST、系统发育、差异表达等生�
 
 # 生信分析
 
-## 环境
-- Python Biopython 1.88 已装（from Bio import SeqIO, Entrez, Align, Phylo）
-- R 4.5 可用；Bioconductor 包按需安装（BiocManager::install）
+## 环境（2026-09-29 实测）
+- Python Biopython 1.85 已装（from Bio import SeqIO, Entrez, Align, Phylo）
+- R 4.6.0 已装但**未加入 PATH**（全路径 `C:\Program Files\R\R-4.6.0\bin\Rscript.exe`）；
+  用户库（自动加载）里已装 CRAN 的 `ggplot2` / `data.table` / `rms` / `survminer` / `vcfR`，
+  以及 Bioconductor 3.23 的 **`Biostrings` 2.80.2 / `biomaRt` 2.68.0**（连同 S4Vectors / IRanges /
+  XVector / AnnotationDbi / BiocFileCache 等依赖）——序列读写、翻译、反向互补、模式匹配都可在 R 侧做。
 - biotools MCP 提供 37 个现成工具（`mcp__biotools__` 前缀），优先复用
 
 ## 常用流程

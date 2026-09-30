@@ -19,9 +19,9 @@
  *     集群侧（或本地）打成 tar 包再传一个归档，而不是逐个文件传；
  *   - 交互会话与传输互不干扰：传输不影响已经建立的 `cluster_exec` 会话。
  */
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -74,13 +74,53 @@ const ASKPASS_BAT = join(ASKPASS_DIR, 'askpass.bat')
 const ASKPASS_JS = join(ASKPASS_DIR, 'answer.cjs')
 const CRED_FILE = join(ASKPASS_DIR, 'credentials.json')
 const COUNT_FILE = join(ASKPASS_DIR, 'count')
+const ASKPASS_CS = join(HERE, 'askpass.cs')
+const ASKPASS_EXE = join(ASKPASS_DIR, 'askpass.exe')
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const DEFAULT_MAX_OUTPUT_BYTES = 64 * 1024
 const READY_PATTERN = /[$#]\s*$/
 const START_TIMEOUT_MS = 45_000
 
-/** 生成 askpass 三件套：无 tty 时 ssh 通过 SSH_ASKPASS 取「密码」与「动态口令」。 */
+/**
+ * 找一份 MSYS 的 bin 目录。
+ *
+ * Windows OpenSSH 用 posix_spawnp 拉起 SSH_ASKPASS：实测**即使指向原生 exe**，
+ * PATH 上没有 MSYS 时仍然报 `CreateProcessW failed error:2` /
+ * `ssh_askpass: posix_spawnp: No such file or directory`；把 Git 的 usr\bin 加进
+ * PATH 之后恢复正常（同机同凭据实测）。可用 DSH_ASKPASS_MSYS 覆盖。
+ * @returns 存在的目录，找不到时 undefined。
+ */
+function msysBinDir() {
+  const candidates = [
+    process.env.DSH_ASKPASS_MSYS,
+    'C:\\Program Files\\Git\\usr\\bin',
+    'C:\\Program Files (x86)\\Git\\usr\\bin',
+  ].filter((candidate) => typeof candidate === 'string' && candidate.length > 0)
+  return candidates.find((candidate) => existsSync(candidate))
+}
+
+/** 用 .NET Framework 的 csc 把 askpass.cs 编译成 askpass.exe；失败则退回 .bat。 */
+function compileAskpass() {
+  const windir = process.env.WINDIR ?? 'C:\\Windows'
+  const csc = [
+    join(windir, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
+    join(windir, 'Microsoft.NET', 'Framework', 'v4.0.30319', 'csc.exe'),
+  ].find((candidate) => existsSync(candidate))
+  if (csc === undefined || !existsSync(ASKPASS_CS)) return false
+  const result = spawnSync(csc, ['/nologo', '/target:exe', `/out:${ASKPASS_EXE}`, ASKPASS_CS], {
+    encoding: 'utf8',
+    windowsHide: true,
+  })
+  return result.status === 0 && existsSync(ASKPASS_EXE)
+}
+
+/**
+ * 生成 askpass 组件：无 tty 时 ssh 通过 SSH_ASKPASS 取「密码」与「动态口令」。
+ *
+ * 优先原生 exe —— Windows OpenSSH 用 posix_spawnp 起不了 .bat。源码 askpass.cs 随
+ * 插件分发，首次连接时编译一次并缓存；.bat + answer.cjs 保留为编译不可用时的退路。
+ */
 function ensureAskpass() {
   mkdirSync(ASKPASS_DIR, { recursive: true })
   writeFileSync(ASKPASS_BAT, [
@@ -104,6 +144,11 @@ function ensureAskpass() {
     "process.stdout.write(String(process.argv[2] === '1' ? cred.password : cred.otp) + '\\n');",
     '',
   ].join('\n'), 'utf8')
+  if (process.platform === 'win32') {
+    const stale = !existsSync(ASKPASS_EXE)
+      || (existsSync(ASKPASS_CS) && statSync(ASKPASS_EXE).mtimeMs < statSync(ASKPASS_CS).mtimeMs)
+    if (stale) compileAskpass()
+  }
 }
 
 /** 每次发起认证前重写凭据与计数：密码固定，动态口令现算。 */
@@ -116,9 +161,25 @@ function writeCredentials(spec) {
   rmSync(COUNT_FILE, { force: true })
 }
 
-/** 子进程用的环境：让 ssh/scp 从 askpass 取密码与动态口令。 */
+/**
+ * 子进程用的环境：让 ssh/scp 从 askpass 取密码与动态口令。
+ *
+ * 有原生 exe 就走 exe —— 要同时给出它读的 DSH_ASKPASS_CRED / DSH_ASKPASS_COUNT，
+ * 以及 posix_spawnp 需要的 MSYS PATH；否则退回 .bat（后者靠自身 set 的变量工作）。
+ * @returns 子进程环境变量。
+ */
 function askpassEnv() {
-  return { ...process.env, SSH_ASKPASS: ASKPASS_BAT, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: 'localhost:0' }
+  const env = { ...process.env, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: 'localhost:0' }
+  if (process.platform === 'win32' && existsSync(ASKPASS_EXE)) {
+    env.SSH_ASKPASS = ASKPASS_EXE
+    env.DSH_ASKPASS_CRED = CRED_FILE
+    env.DSH_ASKPASS_COUNT = COUNT_FILE
+    const msys = msysBinDir()
+    if (msys !== undefined) env.PATH = `${msys};${env.PATH ?? ''}`
+    return env
+  }
+  env.SSH_ASKPASS = ASKPASS_BAT
+  return env
 }
 
 /** ssh/scp/sftp 共用的连接参数（含端口）。 */
@@ -318,7 +379,7 @@ export class ClusterSession {
       `${this.spec.username}@${this.spec.host}`,
     ]
     this.child = spawn(process.env.DSH_SSH_CLIENT ?? 'ssh', args, {
-      env: { ...process.env, SSH_ASKPASS: ASKPASS_BAT, SSH_ASKPASS_REQUIRE: 'force', DISPLAY: 'localhost:0' },
+      env: askpassEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
     })

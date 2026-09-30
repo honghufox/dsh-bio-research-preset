@@ -131,9 +131,10 @@ server 的 `cwd` 正是插件目录，Tavotto 明确不拿它当边界。结果�
 TAVOTTO_MCP_ROOTS = 你的图库目录[;另一个目录…]      # Windows 用 ; 分隔（os.pathsep）
 ```
 
-预设里的值是**用户主目录** `C:\Users\wangh`——图库放在这一层下面都行。要换、要加，
-就在**启动 dsh 之前**设 `TAVOTTO_MCP_ROOTS`（多个根用 `os.pathsep` 分隔，Windows
-上是 `;`）；改完必须重启 dsh，MCP 连接不会热更新环境。
+预设里的默认根由**本机**推导：用户主目录（`USERPROFILE` / `os.homedir()`），逐个确认
+存在后用 `;` 连接——**图库放在这些根下面，桌面版才打得开**。要换、要加，就在**启动
+dsh 之前**设 `TAVOTTO_MCP_ROOTS`（多个根用
+`os.pathsep` 分隔，Windows 上是 `;`）；改完必须重启 dsh，MCP 连接不会热更新环境。
 
 看 `tavotto_health` 的 `root_authority`：`roots` 非空才说明授权已落地。授权失败
 **分档**，每档一个稳定 `code`、一个 `disposition`（谁该动手）和一句 `recovery`
