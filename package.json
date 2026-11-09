@@ -1,9 +1,9 @@
 {
   "name": "bio-research-preset",
-  "version": "1.0.0",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
-  "description": "Self-contained DSH agent presets: inline declarations plus the preset resources they ship.",
+  "description": "Self-contained DSH agent presets: inline declarations plus the preset resources they ship. Composition aligned with DSH 0.2.2-rc.1.",
   "main": "lib/index.js",
   "exports": {
     ".": "./lib/index.js",
@@ -23,6 +23,10 @@
         },
         {
           "dir": "presets/bio-research/tools/zotero",
+          "command": "npm install --omit=dev"
+        },
+        {
+          "dir": "presets/bio-research/tools/pubmed",
           "command": "npm install --omit=dev"
         }
       ]

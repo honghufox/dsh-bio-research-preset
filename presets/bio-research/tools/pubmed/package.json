@@ -1,0 +1,9 @@
+{
+  "name": "bio-research-preset-pubmed-mcp",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Vendored @cyanheads/pubmed-mcp-server for the bio-research preset (stdio MCP).",
+  "dependencies": {
+    "@cyanheads/pubmed-mcp-server": "2.12.0"
+  }
+}

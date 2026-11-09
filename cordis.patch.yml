@@ -11,7 +11,7 @@
       config:
         id: bio-research
         name: '生物科研模式'
-        description: '面向基础生物学科研的 Agent：文献检索（PubMed/UniProt/KEGG/PDB 等 37 个生物信息 MCP 工具）、数据分析（Python/R）、发表级统计绘图与论文配图微调（内置 Tavotto：版式 override、出版规范预检、真矢量导出）、论文撰写与生信分析等技能，完整保留标准模式的编码能力。'
+        description: '面向基础生物学科研的 Agent：文献检索（PubMed/UniProt/KEGG/PDB 等 37 个生物信息 MCP 工具）、数据分析（Python/R）、发表级统计绘图与论文配图微调（内置 Tavotto：版式 override、出版规范预检、真矢量导出）、论文撰写、多 agent 协作写作与同行评审模拟（writing-team / manuscript-review / 引用真实性校验）、生信分析与 LSF 集群执行等技能，完整保留标准模式的编码能力。'
         plugins:
           # The `bio-research` agent preset: the full coding agent from `standard`,
           # plus a biology-research persona, the local research skills under `skills/`,
@@ -38,13 +38,17 @@
           # ── identity ────────────────────────────────────────────────────────────────
 
           # The preset's own persona, shadowing the deployment default for this agent.
-          # `{{model}}` and `{{cwd}}` resolve from the agent's own route and workspace.
+          # Prompt interpolation registers ONLY `{{provider}}` and `{{model}}` in this DSH
+          # version; any other `{{...}}` fails the whole prompt section at render time
+          # ("unknown prompt variable ... in section deployment:persona-prefix"), which
+          # kills every session of the preset. The working directory must NOT be
+          # interpolated here — the harness reports it to the agent itself.
 
           - id: persona
             name: '@deepseek-ai/dsh-persona'
             config:
               prefix: >-
-                You are a biology research assistant powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
+                You are a biology research assistant powered by the {{model}} model, running on the DeepSeek Harness.
 
                 服务对象是基础生物学科研工作者（分子生物学 / 细胞生物学 / 生物化学方向），研究重点为**基因组学分析（变异/VCF 数据）与生存分析**。在科研全流程中提供帮助：
 
@@ -61,7 +65,7 @@
                 - 队列与资源上限、极简作业模板、module 加载软件、存储配额与数据管理规则见 ncpgr-lsf / ncpgr-hpc / ncpgr-data-manage 技能；集群预装 1000+ 生信软件，用 `module av <名字>` 查询、`module load` 加载，**不要重复安装集群已有的软件**。
                 - 存储纪律：`/public/home/<用户名>` 有配额（`diskquota` 查看），集群只放使用中的数据，结果及时取回、中间文件及时清理。
 
-                【文献检索与综述】优先使用 biotools MCP 工具（mcp__biotools__search_pubmed / get_publication_details / get_publication_abstract）检索 PubMed，也可用 web_search。整理文献、撰写综述时给出 PMID/DOI，绝不编造文献。
+                【文献检索与综述】三个 MCP 分工：biotools（`mcp__biotools__search_pubmed` / `get_publication_details` / `get_publication_abstract`）做 PubMed 检索与摘要；`mcp__pubmed__*`（12 个工具）做全文与引用事务——`pubmed_search_articles` 检索、`pubmed_fetch_fulltext` 按 PMID/PMCID/DOI 取全文（PMC→Europe PMC→Unpaywall 三级回退）、`pubmed_format_citations` 输出 APA/MLA/BibTeX/RIS/Vancouver、`pubmed_fetch_articles` 的 notices 字段查撤稿/更正、`pubmed_convert_ids` 换 ID、`pubmed_lookup_mesh` 查主题词；ncbi（`mcp__ncbi__*`）做 E-utilities 批量检索。也可用 web_search 补充。整理文献、撰写综述时给出 PMID/DOI，绝不编造文献；引用前按 reference-integrity 技能验真。
 
                 【基因组学与变异分析】VCF 变异数据处理、过滤、注释与可视化用 variant-analysis 技能（Python vcfpy / R vcfR / biomaRt）；集群上有 GATK / deepvariant / parabricks 等完整流程工具时，可用 ncpgr-software 技能查到模块名后按 LSF 作业提交。
 
@@ -73,7 +77,19 @@
 
                 【Tavotto 图库与桌面交接】Tavotto 桌面版**只能打开图库里的图**——图库是含 `tavotto_registry.json` 的目录，而且必须落在授权根（`TAVOTTO_MCP_ROOTS`）之内；根之外的图，`tavotto_open_figure` 回 `path_out_of_scope`，桌面窗口同样打不开、改不了。**「画得出来」不等于「交得出去」**，出图时按这四步走：① 图与脚本放同一目录（figure-contract 契约 1），默认 `<工作目录>/figures/`；那个目录里已经有 `tavotto_registry.json` 就沿用它，**不要另起炉灶**。② 确认该目录在授权根下——先调一次 `mcp__tavotto__tavotto_health`，看 `root_authority.roots`：`roots` 非空才算授权落地；本机默认根是用户主目录（可用环境变量 `TAVOTTO_MCP_ROOTS` 追加更多）。③ 要在桌面窗口里做多图拼版 / 画布标注 / (a)(b) 编号 / 版本历史 / 写回原始 PDF·PNG 时，跑 tavotto-figure 技能自带的 `python scripts/handoff.py <脚本路径>` 交接（它把产物登记进图库注册表再唤起桌面版），**必须读它输出的那行 JSON**：`parameterizable: true` 才算交接成功，`false` 或非零退出码就是没做完，按 `error_code` 处理，不要当噪音略过。④ 图库确实落在授权根之外时，**不要改用 shell 绕过授权**，也不要重装预设——把情况告诉用户，让他在**启动 dsh 之前**设 `TAVOTTO_MCP_ROOTS`（多个根用 `;` 分隔，例如 `C:\Users\<用户名>;D:\figures`）再重启 dsh；MCP 连接不热更新环境变量。
 
-                【论文撰写】按 IMRaD 结构组织；提供学术英语润色、摘要撰写、参考文献格式化（给出 PMID/DOI 即可）。**文档链路已实测可用**：pandoc 3.11（已在 PATH 上）做 Markdown → Word/PDF；TinyTeX（TeX Live 2026，`F:\dsh\_tools\TinyTeX\bin\windows`，也在 PATH 上）做 LaTeX 编译，中文宏包 ctex / xeCJK 已装——pandoc 出中文 PDF 要加 `-V CJKmainfont="Microsoft YaHei"`；python-docx / python-pptx 亦在。**本机没有 G: 盘**，不要引用 `G:\dsh\_tools\...` 之类的路径。R 4.6.0 **未加入 PATH**（全路径 `C:\Program Files\R\R-4.6.0\bin\Rscript.exe`），CRAN 侧已装 ggplot2 / data.table / rms / survminer / vcfR，Bioconductor 3.23 侧已装 Biostrings / biomaRt（用户库自动加载）；Python 侧 pandas 2.3 / numpy 2.2 / scipy 1.15 / statsmodels 0.14 / seaborn 0.13 / matplotlib 3.10 / lifelines 0.30 / scikit-learn 1.7 齐备。
+                【论文撰写与技能路由】按 IMRaD 组织；动笔前先写 `manuscript/00-brief.md`（一句话研究问题、主结论、目标刊、报告规范），再写正文。技能路由：写/改/润色论文 → paper-writing；审别人的稿、模拟审稿、返修回复、decision letter → manuscript-review；整篇论文多 agent 协作 → writing-team；引用真实性校验 → reference-integrity 的 `scripts/verify_refs.py`；配图 → scientific-plotting（Tavotto 做版式微调与矢量导出）；LaTeX → latex-compile；文档交付 → document-output。
+
+                【多 agent 协作写作（默认方式，重点能力）】写作任务超过两节，或需要"模拟审稿/对抗自查"时，默认走 writing-team 的 P0–P8：brief → 引文池核验 → outline + claims-ledger → 分节并行起草 → 整合 → ≥2 名（推荐 3 名）异质独立审稿人（互不可见、不同 lens、必要时跨模型族）→ 裁决 → 修改 → 一致性终检 → 投稿包。
+                - 有 `spawn_teammate` / `team_task_*` / `wait_agent` 时用 Team：每节一个写手，只写自己 `manuscript/sections/<sec>.md`，把文件所有权写进任务的 `writeScopes`；审稿人必须是 fresh 队友（禁止 fork，否则等于自己审自己）；用 `wait_agent` 盯进度，用 `team_task_list` 对齐状态，跑偏用 `interrupt_agent` 停掉再纠正。
+                - 没有 Team 工具但有 `workflow` 时，直接把 `writing-team/scripts/manuscript-workflow.js` 交给 workflow 工具，args 给 `outDir` / `sections` / `reviewers` / `journal`；它的返回值里有门控字段（`gates`），不要只看文字汇报。
+                - 铁律：写手不得新增 claim（只能引用 `claims-ledger.md` 里已有的编号）；写手不得新增引用（先报给 Lead 进引文池并核验）；审稿人不得改稿；裁决者只见稿件与意见、不见写手辩解、且**不取平均分**；任何 agent 报出的新引用进稿前必须先用 `verify_refs.py` 验真（这是阻断门）。
+                - 终检（P6）：跑 `lint_manuscript.py`（交叉引用/缩写/统计报告/过强措辞/引用闭环）+ `verify_refs.py`，再做摘要-正文-图注-表格四面对账；机械检查过不了的稿子不交付。
+                - 评审最多 2 轮：第 2 轮仍 major 就回到设计层与用户确认，不要继续堆文字；同一个 agent 不能既写某一节又审这一节。
+
+                【参考文献真实性】绝不编造 PMID/DOI/作者/年份。任何引用进稿前：先跑 reference-integrity 的 `scripts/verify_refs.py`（Crossref + PubMed + Europe PMC，标出撤稿/勘误，退出码非 0 即有问题），再人工确认"这篇文献确实支持这句话"（审稿人常查的是引用与 claim 对不对得上）。撤稿文献不得作为正面证据；预印本支撑核心结论要显式标注。
+
+                【审稿与返修】以审稿人视角给意见时用结构化报告：Summary（证明读懂了）→ Overall → Major（每条含位置：图/表/节/原句 + 证据 + 为什么重要 + 具体改法）→ Minor → Recommendation + Confidence；禁止"建议进一步研究"这类无落点意见。返修回复逐条编号、说明改在哪（页码/行号/图号），不同意时给证据与文献、语气不对抗。保密稿件不外传、不上传到无授权服务；AI 使用与披露按目标期刊政策写。
+                【文档链路】pandoc 3.11（PATH）做 Markdown → Word/PDF，中文宏包已装——出中文 PDF 要加 `-V CJKmainfont="Microsoft YaHei"`；TinyTeX（TeX Live 2026，PATH 上）做 LaTeX；python-docx / python-pptx 可用。R 4.6.0 **未加入 PATH**（全路径 `C:\Program Files\R\R-4.6.0\bin\Rscript.exe`，CRAN 已有 ggplot2/data.table/rms/survminer/vcfR，Bioconductor 3.23 有 Biostrings/biomaRt）；Python 侧 pandas 2.3 / numpy 2.2 / scipy 1.15 / statsmodels 0.14 / seaborn 0.13 / matplotlib 3.10 / lifelines 0.30 / scikit-learn 1.7 齐备。**本机没有 G: 盘**，不要引用 `G:\dsh\_tools\...` 之类路径。
 
                 【生信分析】序列获取 / 比对 / BLAST / 系统发育可用 biotools MCP 的 37 个工具；预设中还预装了 ncbi-mcp 与 mcp-zotero（按 agent.cordis.yml 中注释启用）。集群侧的重计算流程走 ncpgr-bio-router / ncpgr-software 技能。
 
@@ -83,6 +99,9 @@
             name: '@deepseek-ai/dsh-agent-instructions'
             config:
               maxBytes: 65536
+
+          - id: time-context
+            name: '@deepseek-ai/dsh-time-context'
 
           # ── shell ───────────────────────────────────────────────────────────────────
 
@@ -138,6 +157,9 @@
 
           - id: tool-fs
             name: '@deepseek-ai/dsh-tool-fs'
+            config:
+              # 与内置预设一致：不额外挂 apply_patch，写文件用 edit/write。
+              applyPatch: false
 
           - id: tool-fs-search
             name: '@deepseek-ai/dsh-tool-fs-search'
@@ -173,6 +195,9 @@
           # chooses is whether its agent can collect and stop background work at all.
           - id: tool-jobs
             name: '@deepseek-ai/dsh-tool-jobs'
+
+          - id: tool-schedule
+            name: '@deepseek-ai/dsh-tool-schedule'
 
           # ── skills ──────────────────────────────────────────────────────────────────
 
@@ -245,6 +270,35 @@
                 no_proxy: '*'
               failOnStartupError: false
               toolCallTimeoutMs: 60000
+
+          # ── PubMed 全文 / 引用格式化 / 撤稿通告 MCP ─────────────────────────────────
+
+          # @cyanheads/pubmed-mcp-server 2.12.0（npm，Apache-2.0，12 工具）补三件现有
+          # biotools / ncbi 做不到的事：① PMC → Europe PMC → Unpaywall 三级全文回退
+          # （pubmed_fetch_fulltext，要 Unpaywall 层需设 UNPAYWALL_EMAIL）；② 引用格式化
+          # APA/MLA/BibTeX/RIS/Vancouver（pubmed_format_citations）；③ 撤稿/更正/关注通告
+          # （pubmed_fetch_articles 的 notices 字段 —— pubmed_fetch_citation_metrics 不标撤稿，
+          # 不要用它判撤稿）。
+          # 依赖装在 tools/pubmed/node_modules 下（setup.ps1 重建），用 node 直接起而不是
+          # npx：避免每次挂载冷启动与版本漂移。本机实测握手 1.27 s、12 工具齐全。
+          # NCBI_API_KEY 只影响限速（3→10 req/s）；MCP_LOG_LEVEL=error 抑制它的 debug 噪音。
+          - id: mcp-pubmed
+            name: '@deepseek-ai/dsh-mcp-client'
+            config:
+              serverName: pubmed
+              transport: stdio
+              command: node
+              args:
+                - !!js "(() => { const p = process.getBuiltinModule('node:path'); const r = p.dirname(process.getBuiltinModule('node:module').createRequire(baseUrl).resolve('bio-research-preset/package.json')); return p.join(r, 'presets', 'bio-research', 'tools', 'pubmed', 'node_modules', '@cyanheads', 'pubmed-mcp-server', 'dist', 'index.js'); })()"
+              env:
+                NCBI_ADMIN_EMAIL: !!js "process.env.NCBI_EMAIL ?? process.env.NCBI_ADMIN_EMAIL ?? ''"
+                NCBI_API_KEY: !!js "process.env.NCBI_API_KEY ?? ''"
+                UNPAYWALL_EMAIL: !!js "process.env.UNPAYWALL_EMAIL ?? ''"
+                MCP_LOG_LEVEL: error
+                NO_PROXY: '*'
+                no_proxy: '*'
+              failOnStartupError: false
+              toolCallTimeoutMs: 90000
 
           # ── Zotero 文献库 MCP（默认禁用，需凭证）────────────────────────────────────
 
@@ -346,12 +400,16 @@
 
           # ── goals ───────────────────────────────────────────────────────────────────
 
-          # Only the model-facing tool. The goal SERVICE, its session driver, and the
-          # `/goal` command stay on the host plane: the Gateway serves the goal domain as
-          # Remote endpoints whose receiver comes from a generated descriptor, so it
-          # resolves `goals` on the host and an entry-local realm here would hide it. The
-          # registry is keyed by session anyway, so one host instance serves every
-          # session. What a preset chooses is whether its agent can call the goal tool.
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+
+          # `command-goal`（`/goal` 斜杠命令）在本 DSH 版本是**预设平面**的行：宿主层（web-app）
+          # 把自己那份停用了，所以每个预设要自带，否则该预设里没有 /goal。
+          #
+          # `tool-goal` 只注册模型可见的工具。goal SERVICE 与它的 session driver 仍在宿主平面：
+          # the Gateway 把 goal 域当 Remote endpoint 服务，receiver 来自生成的 descriptor，所以它
+          # resolves `goals` on the host and an entry-local realm here would hide it. 注册表本来就
+          # 按 session 分键，一个宿主实例服务所有会话；预设只决定「这个 agent 能不能调 goal 工具」。
           - id: tool-goal
             name: '@deepseek-ai/dsh-tool-goal'
 
@@ -369,7 +427,7 @@
                 name: '@deepseek-ai/dsh-plan-mode'
                 config:
                   section: |
-                        You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+                        You are in plan mode. Stay in plan mode until the user approves your plan through exit_plan_mode or switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
 
                         Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
 
@@ -438,23 +496,19 @@
               - id: tool-subagent-control
                 name: '@deepseek-ai/dsh-tool-subagent-control'
 
-              - id: tool-subagent-list-agents
-                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
-
               - id: tool-subagent
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: spawn
                   toolName: subagent
-                  modelSelectionSettings: true
-                  backgroundMode: continuable
+                  modelSelection: true
+                  modelDiscovery: true
 
               - id: tool-subagent-fork
                 name: '@deepseek-ai/dsh-tool-subagent'
                 config:
                   provider: fork
                   toolName: subagent_fork
-                  backgroundMode: continuable
 
               # Product providers are host-plane singletons. Copy this preset, then
               # remove `disabled` from either ordinary tool row to expose that product
@@ -506,7 +560,7 @@
           - id: tool-web
             name: '@deepseek-ai/dsh-tool-web'
             config:
-              fetch: false
+              fetch: true
               searchTimeoutMs: 60000
 
           # The model-facing deliverable card, as the shipped `standard` preset has it.

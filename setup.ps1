@@ -1,4 +1,4 @@
-﻿<#
+<#
   生物科研模式（含 LSF 集群执行） 预设的安装脚本。
 
   1) 重建随 bundle 分发但未提交的依赖产物（node_modules），并校验真正的构建产物；
@@ -37,7 +37,8 @@ Write-Host "profile : $ProfileDir"
 # 少一次构建就会让 mcp-client 起不来，所以这里单独校验。
 $rebuilds = @(
   @{ dir = 'presets/bio-research/tools/biotools'; artifact = 'node_modules/bach-biotools-server/build/index.js' },
-  @{ dir = 'presets/bio-research/tools/zotero';   artifact = 'node_modules/mcp-zotero/build/server.js' }
+  @{ dir = 'presets/bio-research/tools/zotero';   artifact = 'node_modules/mcp-zotero/build/server.js' },
+  @{ dir = 'presets/bio-research/tools/pubmed';   artifact = 'node_modules/@cyanheads/pubmed-mcp-server/dist/index.js' }
 )
 foreach ($item in $rebuilds) {
   $relative = $item.dir

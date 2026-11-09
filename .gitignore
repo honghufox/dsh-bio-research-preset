@@ -19,3 +19,11 @@ askpass/askpass.exe
 .DS_Store
 Thumbs.db
 desktop.ini
+# ── 安装期 / 试跑产物 ──────────────────────────────────────────────────────
+# 依赖锁与 node_modules 同策略：不随仓库分发，克隆后按 setup.ps1 重建
+package-lock.json
+# 迁移前备份
+*.bak-*
+# verify_refs.py / lint 的试跑输出
+_full*.json
+_full*.tsv
